@@ -787,8 +787,10 @@ final class SagaExtras {
                             String from = gid(stop);
                             if (from != null) {
                                 String body = transitGet(Transit.vtDeparturesUrl(from, now), null);
-                                next = Transit.parseTrips(Transit.departuresAsTrips(body, transitStops), now,
+                                StringBuilder seen = new StringBuilder();
+                                next = Transit.parseTrips(Transit.departuresAsTrips(body, transitStops, seen), now,
                                         TRANSIT_NEXT);
+                                Http.info("board " + stop + ": " + seen);
                                 any = true;
                             }
                         } else {
