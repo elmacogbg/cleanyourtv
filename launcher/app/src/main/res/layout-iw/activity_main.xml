@@ -108,8 +108,8 @@
         android:importantForAccessibility="no"
         android:visibility="gone" />
 
-    <!-- This fork: news headlines (SagaExtras), a column opposite the weather that rolls upward. Filled in code;
-         its height is the space between the clock row and the dock. -->
+    <!-- This fork: the right-hand column opposite the weather (SagaExtras): departures towards town, then news
+         headlines rolling upward. Filled in code; it ends level with the weather. -->
     <LinearLayout
         android:id="@+id/newsPanel"
         android:layout_width="352dp"
@@ -117,20 +117,6 @@
         android:layout_gravity="top|left"
         android:layout_marginStart="60dp"
         android:layout_marginTop="132dp"
-        android:orientation="vertical"
-        android:focusable="false"
-        android:importantForAccessibility="no"
-        android:visibility="gone" />
-
-    <!-- This fork: next departures towards town (SagaExtras, Transit), in the clock row between the date and the
-         buttons. Filled in code. -->
-    <LinearLayout
-        android:id="@+id/transitPanel"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|left"
-        android:layout_marginStart="240dp"
-        android:layout_marginTop="34dp"
         android:orientation="vertical"
         android:focusable="false"
         android:importantForAccessibility="no"

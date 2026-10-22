@@ -69,7 +69,9 @@ final class SagaExtras {
     private static final String PREFS = "saga_extras";
 
     private final Context ctx;
-    private final LinearLayout weatherPanel, newsPanel, transitPanel;
+    private final LinearLayout weatherPanel, column, newsPanel, transitPanel;
+    private static final int SECTION_GAP_DP = 28;
+    private List<List<Transit.Departure>> lastDepartures;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final float density;
     private final SharedPreferences prefs;
@@ -98,12 +100,22 @@ final class SagaExtras {
     private final int newsDefaultHeight;
     private boolean rolling;
 
-    SagaExtras(Context ctx, LinearLayout weatherPanel, LinearLayout newsPanel, LinearLayout transitPanel) {
+    SagaExtras(Context ctx, LinearLayout weatherPanel, LinearLayout column) {
         this.ctx = ctx;
         this.weatherPanel = weatherPanel;
-        this.newsPanel = newsPanel;
-        this.transitPanel = transitPanel;
+        this.column = column;
         this.density = ctx.getResources().getDisplayMetrics().density;
+        // The right-hand column: departures on top (what you leave for), news under them (what you glance at).
+        this.transitPanel = new LinearLayout(ctx);
+        this.newsPanel = new LinearLayout(ctx);
+        for (LinearLayout block : new LinearLayout[]{transitPanel, newsPanel}) {
+            block.setOrientation(LinearLayout.VERTICAL);
+            block.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            block.setVisibility(View.GONE);
+            column.addView(block);
+        }
+        ((LinearLayout.LayoutParams) transitPanel.getLayoutParams()).bottomMargin = dp(SECTION_GAP_DP);
         this.prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         this.regular = font(R.font.outfit_regular);
         this.light = font(R.font.outfit_light);
@@ -141,14 +153,13 @@ final class SagaExtras {
         vtSecret = prefs.getString("vt_secret", "");
         for (String name : transitStops) loadGid(name);
         loadGid(transitTo);
-        transitPanel.setVisibility(View.GONE);
         weatherPanel.setVisibility(View.GONE);
-        newsPanel.setVisibility(View.GONE);
+        column.setVisibility(View.GONE);
         // The column ends where the weather ends; the layout's height is the fallback without weather.
-        ViewGroup.LayoutParams np = newsPanel.getLayoutParams();
+        ViewGroup.LayoutParams np = column.getLayoutParams();
         newsDefaultHeight = np.height > 0 ? np.height : dp(210);
         np.height = ViewGroup.LayoutParams.WRAP_CONTENT;
-        newsPanel.setLayoutParams(np);
+        column.setLayoutParams(np);
         weatherPanel.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
             if (b - t != ob - ot) main.post(this::fitNews);
         });
@@ -350,7 +361,7 @@ final class SagaExtras {
             case "fog": return R.drawable.wx_fog;
             case "rain_light": return R.drawable.wx_rain_light;
             case "rain": return R.drawable.wx_rain;
-            case "rain_heavy": return R.drawable.wx_rain_heavy;
+            case "rain_heavy": return R.drawable.wx_rain;   // one rain icon: the heavy one read as noise at TV size
             case "sleet": return R.drawable.wx_sleet;
             case "snow": return R.drawable.wx_snow;
             case "snow_heavy": return R.drawable.wx_snow_heavy;
@@ -440,6 +451,7 @@ final class SagaExtras {
         window.addView(newsList);
         newsPanel.addView(window);
         newsPanel.setVisibility(View.VISIBLE);
+        column.setVisibility(View.VISIBLE);
         rolling = false;
         newsList.post(this::fitNews);
         scheduleRoll();
@@ -466,8 +478,9 @@ final class SagaExtras {
     }
 
     /**
-     * Sizes the headline window to end level with the bottom of the weather (or at the layout's height without
-     * weather). The headline crossing that edge fades out through the window's fading edge.
+     * Sizes the headline window so the column (departures, then news) ends level with the bottom of the weather,
+     * or at the layout's height without weather. The headline crossing that edge fades out through the window's
+     * fading edge.
      */
     private void fitNews() {
         if (newsWindow == null || newsPanel.getChildCount() == 0) return;
@@ -476,10 +489,17 @@ final class SagaExtras {
             newsPanel.post(this::fitNews);
             return;
         }
-        int column = weatherPanel.getVisibility() == View.VISIBLE && weatherPanel.getHeight() > 0
+        int total = weatherPanel.getVisibility() == View.VISIBLE && weatherPanel.getHeight() > 0
                 ? weatherPanel.getHeight() : newsDefaultHeight;
+        if (transitPanel.getVisibility() == View.VISIBLE) {
+            if (transitPanel.getHeight() == 0) {
+                transitPanel.post(this::fitNews);
+                return;
+            }
+            total -= transitPanel.getHeight() + dp(SECTION_GAP_DP);
+        }
         LinearLayout.LayoutParams wlp = (LinearLayout.LayoutParams) newsWindow.getLayoutParams();
-        int height = Math.max(0, column - header.getHeight() - wlp.topMargin);
+        int height = Math.max(0, total - header.getHeight() - wlp.topMargin);
         if (wlp.height != height) {
             wlp.height = height;
             newsWindow.setLayoutParams(wlp);
@@ -636,64 +656,79 @@ final class SagaExtras {
     }
 
     /**
-     * MOT GÖTEBORG, then one line per stop: "MAJVIK   22 12:03 +8   22 12:25". A late bus shows its real time
-     * with the delay in gold; a cancelled one says so. A stop whose fetch failed keeps the line it had.
+     * MOT GÖTEBORG, then a small table, one row per stop and the same column for every stop's first and second
+     * departure so the times line up: "HJUVIK   34  12:02 · 7 min   34  13:02". The first departure says how long
+     * is left, which is the question you ask the screen; a late bus shows its real time with the delay in gold; a
+     * cancelled one is struck through. A stop whose fetch failed keeps its last row.
      */
     private void renderTransit(List<List<Transit.Departure>> rows) {
         ZoneId zone = ZoneId.systemDefault();
-        String header = transitLabel.isEmpty() ? "Mot " + transitTo : transitLabel;
-        List<CharSequence> previous = new ArrayList<>();
-        for (int i = 1; i < transitPanel.getChildCount(); i++) {
-            previous.add(((TextView) transitPanel.getChildAt(i)).getText());
+        if (lastDepartures != null) {
+            for (int i = 0; i < rows.size() && i < lastDepartures.size(); i++) {
+                if (rows.get(i) == null) rows.set(i, lastDepartures.get(i));
+            }
         }
+        lastDepartures = rows;
+        String header = transitLabel.isEmpty() ? "Mot " + transitTo : transitLabel;
         transitPanel.removeAllViews();
         transitPanel.addView(label(header, DIM));
+        OffsetDateTime now = OffsetDateTime.now();
         for (int i = 0; i < transitStops.size(); i++) {
             List<Transit.Departure> next = rows.get(i);
-            CharSequence line;
-            if (next == null) {
-                if (i >= previous.size()) continue;
-                line = previous.get(i);
-            } else {
-                SpannableStringBuilder sb = new SpannableStringBuilder();
-                int start = sb.length();
-                sb.append(transitStops.get(i).toUpperCase(Locale.getDefault()));
-                sb.setSpan(new ForegroundColorSpan(DIM), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                sb.setSpan(new RelativeSizeSpan((float) LABEL_SP / BODY_SP), start, sb.length(),
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                if (next.isEmpty()) {
-                    int s = sb.append("    ").length();
-                    sb.append("inga avgångar");
-                    sb.setSpan(new ForegroundColorSpan(DIM), s, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                }
-                for (Transit.Departure d : next) {
-                    sb.append("    ");
-                    if (!d.line.isEmpty()) {
-                        int s = sb.length();
-                        sb.append(d.line).append(' ');
-                        sb.setSpan(new ForegroundColorSpan(DIM), s, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                    }
-                    int s = sb.length();
-                    sb.append(d.clock(zone));
-                    if (d.cancelled) {
-                        sb.setSpan(new android.text.style.StrikethroughSpan(), s, sb.length(),
-                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                        int c = sb.append(" inställd").length();
-                        sb.setSpan(new ForegroundColorSpan(GOLD), c - " inställd".length(), c,
-                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                    } else if (d.minutesLate() >= 1) {
-                        int c = sb.length();
-                        sb.append(" +").append(String.valueOf(d.minutesLate()));
-                        sb.setSpan(new ForegroundColorSpan(GOLD), c, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                    }
-                }
-                line = sb;
+            if (next == null) continue;
+            LinearLayout row = new LinearLayout(ctx);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            rlp.topMargin = dp(6);
+            row.setLayoutParams(rlp);
+            TextView name = label(transitStops.get(i), DIM);
+            name.setMinWidth(dp(96));
+            row.addView(name);
+            if (next.isEmpty()) {
+                row.addView(text("Inga avgångar", BODY_SP, DIM, light));
             }
-            TextView t = text(line, BODY_SP, WHITE, light);
-            lp(t).topMargin = dp(4);
-            transitPanel.addView(t);
+            for (int k = 0; k < next.size(); k++) {
+                TextView cell = text(departure(next.get(k), k == 0, now, zone), BODY_SP, WHITE, light);
+                cell.setMinWidth(dp(k == 0 ? 152 : 0));
+                row.addView(cell);
+            }
+            transitPanel.addView(row);
         }
         transitPanel.setVisibility(transitPanel.getChildCount() > 1 ? View.VISIBLE : View.GONE);
+        if (transitPanel.getVisibility() == View.VISIBLE) column.setVisibility(View.VISIBLE);
+        transitPanel.post(this::fitNews);
+    }
+
+    /** "34  12:02 · 7 min": the line dim, the time white, a delay or cancellation in gold, minutes for the first. */
+    private static CharSequence departure(Transit.Departure d, boolean first, OffsetDateTime now, ZoneId zone) {
+        SpannableStringBuilder sb = new SpannableStringBuilder();
+        if (!d.line.isEmpty()) {
+            sb.append(d.line).append("  ");
+            sb.setSpan(new ForegroundColorSpan(DIM), 0, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        int t = sb.length();
+        sb.append(d.clock(zone));
+        if (d.cancelled) {
+            sb.setSpan(new android.text.style.StrikethroughSpan(), t, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            int c = sb.length();
+            sb.append(" inställd");
+            sb.setSpan(new ForegroundColorSpan(GOLD), c, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            return sb;
+        }
+        if (d.minutesLate() >= 1) {
+            int c = sb.length();
+            sb.append(" +").append(String.valueOf(d.minutesLate()));
+            sb.setSpan(new ForegroundColorSpan(GOLD), c, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        long minutes = java.time.Duration.between(now, d.when()).toMinutes();
+        if (first && minutes >= 0 && minutes < 60) {
+            int c = sb.length();
+            sb.append(minutes == 0 ? "  \u00B7 nu" : "  \u00B7 " + minutes + " min");
+            sb.setSpan(new ForegroundColorSpan(DIM), c, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        return sb;
     }
 
     // ---- small view helpers --------------------------------------------------------------------------------
