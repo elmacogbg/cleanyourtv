@@ -418,7 +418,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         raceKicker = findViewById(R.id.raceKicker);
         raceHeadline = findViewById(R.id.raceHeadline);
         raceSessions = findViewById(R.id.raceSessions);
-        extras = new SagaExtras(this, findViewById(R.id.weatherPanel), findViewById(R.id.newsPanel));
+        extras = new SagaExtras(this, findViewById(R.id.weatherPanel), findViewById(R.id.newsPanel),
+                findViewById(R.id.transitPanel));
         showStats = cfg.showStats;
         shamsi = cfg.shamsiDate;
         greetingName = cfg.greetingName;

@@ -27,6 +27,8 @@ import org.json.JSONObject;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -62,17 +64,23 @@ final class SagaExtras {
     private static final long ROLL_EVERY_MS = 6_000L;
     private static final long ROLL_MS = 700L;
     private static final int NEWS_MAX = 15;
+    private static final long TRANSIT_EVERY_MS = 60_000L;   // two stops: two calls a minute, Sleipner allows 60
+    private static final int TRANSIT_NEXT = 2;
     private static final String PREFS = "saga_extras";
 
     private final Context ctx;
-    private final LinearLayout weatherPanel, newsPanel;
+    private final LinearLayout weatherPanel, newsPanel, transitPanel;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final float density;
     private final SharedPreferences prefs;
     private final Typeface regular, light;
 
     private final String placeName, newsUrl;
-    private final boolean weatherOn, newsOn;
+    private final boolean weatherOn, newsOn, transitOn;
+    private final List<String> transitStops = new ArrayList<>();
+    private final String transitTo, transitLabel, transitApi;
+    /** Stop name to Västtrafik gid, looked up once through Sleipner and kept in prefs. */
+    private final java.util.Map<String, String> gids = new java.util.concurrent.ConcurrentHashMap<>();
     /** From the theme, or geocoded from the name the way Njord found it; NaN until known. */
     private volatile double lat, lon;
 
@@ -86,10 +94,11 @@ final class SagaExtras {
     private final int newsDefaultHeight;
     private boolean rolling;
 
-    SagaExtras(Context ctx, LinearLayout weatherPanel, LinearLayout newsPanel) {
+    SagaExtras(Context ctx, LinearLayout weatherPanel, LinearLayout newsPanel, LinearLayout transitPanel) {
         this.ctx = ctx;
         this.weatherPanel = weatherPanel;
         this.newsPanel = newsPanel;
+        this.transitPanel = transitPanel;
         this.density = ctx.getResources().getDisplayMetrics().density;
         this.prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         this.regular = font(R.font.outfit_regular);
@@ -110,6 +119,22 @@ final class SagaExtras {
         String url = json != null ? json.optString("news_rss", "").trim() : "";
         newsOn = url.startsWith("https://");
         newsUrl = url;
+        // transit_stops: ["Majvik", "Hjuvik"], transit_to: "Centralstationen", transit_label: "Mot Göteborg"
+        org.json.JSONArray stops = json != null ? json.optJSONArray("transit_stops") : null;
+        if (stops != null) {
+            for (int i = 0; i < stops.length(); i++) {
+                String name = stops.optString(i, "").trim();
+                if (!name.isEmpty()) transitStops.add(name);
+            }
+        }
+        transitTo = json != null ? json.optString("transit_to", "").trim() : "";
+        transitLabel = json != null ? json.optString("transit_label", "").trim() : "";
+        String api = json != null ? json.optString("transit_api", "").trim() : "";
+        transitApi = api.startsWith("https://") ? api : Transit.DEFAULT_API;
+        transitOn = !transitStops.isEmpty() && !transitTo.isEmpty();
+        for (String name : transitStops) loadGid(name);
+        loadGid(transitTo);
+        transitPanel.setVisibility(View.GONE);
         weatherPanel.setVisibility(View.GONE);
         newsPanel.setVisibility(View.GONE);
         // The column ends where the weather ends; the layout's height is the fallback without weather.
@@ -123,7 +148,7 @@ final class SagaExtras {
     }
 
     boolean enabled() {
-        return weatherOn || newsOn;
+        return weatherOn || newsOn || transitOn;
     }
 
     /** Home came to the foreground: refresh whatever is due, then keep refreshing. */
@@ -146,6 +171,7 @@ final class SagaExtras {
             else scheduleNews(NEWS_EVERY_MS - (now - newsAt));
             scheduleRoll();
         }
+        if (transitOn) fetchTransit();
     }
 
     /** Home went to the background: no more fetches and no rolling until it is back. */
@@ -154,6 +180,7 @@ final class SagaExtras {
         main.removeCallbacks(weatherTick);
         main.removeCallbacks(newsTick);
         main.removeCallbacks(rollTick);
+        main.removeCallbacks(transitTick);
         if (newsList != null) {
             newsList.animate().cancel();
             newsList.setTranslationY(0);
@@ -490,6 +517,122 @@ final class SagaExtras {
                         scheduleRoll();
                     }
                 });
+    }
+
+    // ---- transit -------------------------------------------------------------------------------------------
+
+    private final Runnable transitTick = this::fetchTransit;
+
+    private void loadGid(String name) {
+        String gid = prefs.getString("gid_" + name, null);
+        if (gid != null) gids.put(name, gid);
+    }
+
+    /** Worker thread: the stop's gid, from prefs or one lookup through Sleipner. */
+    private String gid(String name) throws Exception {
+        String gid = gids.get(name);
+        if (gid != null) return gid;
+        gid = Transit.parseStopGid(Http.get(Transit.stopsUrl(transitApi, name)));
+        if (gid != null) {
+            gids.put(name, gid);
+            prefs.edit().putString("gid_" + name, gid).apply();
+        }
+        return gid;
+    }
+
+    /** Every minute while Home is up: the next two departures from each stop towards the destination. */
+    private void fetchTransit() {
+        if (!running) return;
+        worker.execute(() -> {
+            List<List<Transit.Departure>> rows = new ArrayList<>();
+            boolean any = false;
+            try {
+                String to = gid(transitTo);
+                for (String stop : transitStops) {
+                    List<Transit.Departure> next = null;
+                    try {
+                        String from = to == null ? null : gid(stop);
+                        if (from != null && !from.equals(to)) {
+                            next = Transit.parseTrips(Http.get(Transit.tripsUrl(transitApi, from, to)),
+                                    OffsetDateTime.now(), TRANSIT_NEXT);
+                            any = true;
+                        }
+                    } catch (Exception e) {
+                        Http.log("transit " + stop, e);
+                    }
+                    rows.add(next);
+                }
+            } catch (Exception e) {
+                Http.log("transit", e);
+            }
+            boolean ok = any;
+            main.post(() -> {
+                if (ok) renderTransit(rows);
+                main.removeCallbacks(transitTick);
+                if (running) main.postDelayed(transitTick, TRANSIT_EVERY_MS);
+            });
+        });
+    }
+
+    /**
+     * MOT GÖTEBORG, then one line per stop: "MAJVIK   22 12:03 +8   22 12:25". A late bus shows its real time
+     * with the delay in gold; a cancelled one says so. A stop whose fetch failed keeps the line it had.
+     */
+    private void renderTransit(List<List<Transit.Departure>> rows) {
+        ZoneId zone = ZoneId.systemDefault();
+        String header = transitLabel.isEmpty() ? "Mot " + transitTo : transitLabel;
+        List<CharSequence> previous = new ArrayList<>();
+        for (int i = 1; i < transitPanel.getChildCount(); i++) {
+            previous.add(((TextView) transitPanel.getChildAt(i)).getText());
+        }
+        transitPanel.removeAllViews();
+        transitPanel.addView(label(header, DIM));
+        for (int i = 0; i < transitStops.size(); i++) {
+            List<Transit.Departure> next = rows.get(i);
+            CharSequence line;
+            if (next == null) {
+                if (i >= previous.size()) continue;
+                line = previous.get(i);
+            } else {
+                SpannableStringBuilder sb = new SpannableStringBuilder();
+                int start = sb.length();
+                sb.append(transitStops.get(i).toUpperCase(Locale.getDefault()));
+                sb.setSpan(new ForegroundColorSpan(DIM), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sb.setSpan(new RelativeSizeSpan((float) LABEL_SP / BODY_SP), start, sb.length(),
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                if (next.isEmpty()) {
+                    int s = sb.append("    ").length();
+                    sb.append("inga avgångar");
+                    sb.setSpan(new ForegroundColorSpan(DIM), s, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                }
+                for (Transit.Departure d : next) {
+                    sb.append("    ");
+                    if (!d.line.isEmpty()) {
+                        int s = sb.length();
+                        sb.append(d.line).append(' ');
+                        sb.setSpan(new ForegroundColorSpan(DIM), s, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    }
+                    int s = sb.length();
+                    sb.append(d.clock(zone));
+                    if (d.cancelled) {
+                        sb.setSpan(new android.text.style.StrikethroughSpan(), s, sb.length(),
+                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                        int c = sb.append(" inställd").length();
+                        sb.setSpan(new ForegroundColorSpan(GOLD), c - " inställd".length(), c,
+                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    } else if (d.minutesLate() >= 1) {
+                        int c = sb.length();
+                        sb.append(" +").append(String.valueOf(d.minutesLate()));
+                        sb.setSpan(new ForegroundColorSpan(GOLD), c, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    }
+                }
+                line = sb;
+            }
+            TextView t = text(line, BODY_SP, WHITE, light);
+            lp(t).topMargin = dp(4);
+            transitPanel.addView(t);
+        }
+        transitPanel.setVisibility(transitPanel.getChildCount() > 1 ? View.VISIBLE : View.GONE);
     }
 
     // ---- small view helpers --------------------------------------------------------------------------------
