@@ -12,6 +12,7 @@ import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
+import android.text.style.LeadingMarginSpan;
 import android.text.style.RelativeSizeSpan;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -246,7 +247,7 @@ final class SagaExtras {
         grid.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams gridLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        gridLp.topMargin = dp(18);
+        gridLp.topMargin = dp(16);
         grid.setLayoutParams(gridLp);
         int hour = LocalTime.now().getHour();
         for (Weather.Period p : s.periods) {
@@ -384,11 +385,15 @@ final class SagaExtras {
         scheduleRoll();
     }
 
-    /** One headline: a gold bullet and up to two lines of BODY text. */
+    /** One headline: a gold bullet and up to two lines of BODY text, the second line hanging under the first word. */
     private TextView headline(String title) {
-        SpannableStringBuilder sb = new SpannableStringBuilder("•  " + title);
+        String bullet = "\u2022  ";
+        SpannableStringBuilder sb = new SpannableStringBuilder(bullet + title);
         sb.setSpan(new ForegroundColorSpan(GOLD), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         TextView t = text(sb, BODY_SP, WHITE, light);
+        int indent = Math.round(t.getPaint().measureText(bullet));
+        sb.setSpan(new LeadingMarginSpan.Standard(0, indent), 0, sb.length(), Spanned.SPAN_INCLUSIVE_INCLUSIVE);
+        t.setText(sb);
         t.setSingleLine(false);
         t.setMaxLines(2);
         t.setEllipsize(TextUtils.TruncateAt.END);
