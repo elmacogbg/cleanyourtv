@@ -6,15 +6,21 @@ import static org.junit.Assert.assertNull;
 
 import org.junit.Test;
 
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.Collections;
 
 /** Weather is a port of Njord's njord.js; these pin the behaviour that makes the TV show Njord's numbers. */
 public class WeatherTest {
 
-    // YR is grouped by its UTC timestamps, as njord.js slices them: 22:00Z on the 21st belongs to the 21st.
+    private static final ZoneId STOCKHOLM = ZoneId.of("Europe/Stockholm");
+    /** 11:30 in Stockholm (CEST). */
+    private static final Instant NOW = Instant.parse("2026-10-22T09:30:00Z");
+
+    // Grouped in local time: 21:00Z on the 21st is 23:00 that day, 01:00Z on the 22nd is 03:00 (period 00–06).
     private static final String YR = "{\"properties\":{\"timeseries\":["
-            + "{\"time\":\"2026-10-21T22:00:00Z\",\"data\":{\"instant\":{\"details\":{\"air_temperature\":20,\"wind_speed\":1,\"wind_from_direction\":0,\"relative_humidity\":50}},"
+            + "{\"time\":\"2026-10-21T21:00:00Z\",\"data\":{\"instant\":{\"details\":{\"air_temperature\":20,\"wind_speed\":1,\"wind_from_direction\":0,\"relative_humidity\":50}},"
             + "\"next_1_hours\":{\"details\":{\"precipitation_amount\":5}}}},"
             + "{\"time\":\"2026-10-22T01:00:00Z\",\"data\":{\"instant\":{\"details\":{\"air_temperature\":8.4,\"wind_speed\":4,\"wind_from_direction\":180,\"relative_humidity\":88}},"
             + "\"next_1_hours\":{\"summary\":{\"symbol_code\":\"cloudy\"},\"details\":{\"precipitation_amount\":0.2}},"
@@ -27,21 +33,24 @@ public class WeatherTest {
             + "{\"time\":\"2026-10-22T04:00:00Z\",\"data\":{\"air_temperature\":9,\"wind_speed\":5,\"wind_direction\":200,\"relative_humidity\":86,\"precipitation_amount_mean\":0.4}},"
             + "{\"time\":\"2026-10-22T11:00:00Z\",\"data\":{\"air_temperature\":13,\"wind_speed\":8,\"wind_direction\":160,\"relative_humidity\":92,\"precipitation_amount_mean\":2.2}}]}";
 
-    private static final String OPEN_METEO = "{"
+    private static final String OPEN_METEO = "{\"timezone\":\"Europe/Stockholm\","
             + "\"daily\":{\"time\":[\"2026-10-22\",\"2026-10-23\"],\"temperature_2m_max\":[12.3,10],\"temperature_2m_min\":[10.6,7],"
             + "\"precipitation_sum\":[8.3,0],\"windspeed_10m_max\":[8.2,4],\"winddirection_10m_dominant\":[185,90],"
             + "\"apparent_temperature_min\":[9.6,5],\"apparent_temperature_max\":[11.5,9],\"uv_index_max\":[1.2,2]},"
             + "\"hourly\":{\"time\":[\"2026-10-22T01:00\",\"2026-10-22T13:00\"],\"temperature_2m\":[11,12],\"windspeed_10m\":[6,7],"
             + "\"winddirection_10m\":[90,180],\"precipitation\":[0.5,0],\"apparent_temperature\":[10,11]}}";
 
+    /** YR as it answers at 11:30: from the current hour on, nothing from yesterday. */
+    private static final String YR_TODAY = YR.replaceFirst("\\{\"time\":\"2026-10-21T21:00:00Z\".*?\\}\\}\\}\\},", "");
+
     private static Weather.Summary today() throws Exception {
-        return Weather.summarize(Arrays.asList(
-                Weather.parseYr(YR), Weather.parseSmhi(SMHI), Weather.parseOpenMeteo(OPEN_METEO), null));
+        return Weather.summarize(Arrays.asList(Weather.parseYr(YR_TODAY, STOCKHOLM), Weather.parseSmhi(SMHI, STOCKHOLM),
+                Weather.parseOpenMeteo(OPEN_METEO, NOW), null));
     }
 
     @Test
-    public void yrDaysFollowUtcDatesLikeNjord() throws Exception {
-        Weather.Source yr = Weather.parseYr(YR);
+    public void yrIsGroupedByLocalDate() throws Exception {
+        Weather.Source yr = Weather.parseYr(YR, STOCKHOLM);
         assertEquals("2026-10-21", yr.days.get(0).date);
         assertEquals("2026-10-22", yr.days.get(1).date);
         assertEquals(Integer.valueOf(8), yr.days.get(1).tempMin);
@@ -51,26 +60,31 @@ public class WeatherTest {
     }
 
     @Test
-    public void openMeteoDayComesFromTheDailyEndpoint() throws Exception {
-        Weather.Day d = Weather.parseOpenMeteo(OPEN_METEO).days.get(0);
-        assertEquals(Integer.valueOf(11), d.tempMin);
+    public void openMeteoTodayCoversTheRemainingHours() throws Exception {
+        Weather.Source om = Weather.parseOpenMeteo(OPEN_METEO, NOW);
+        assertEquals("Europe/Stockholm", om.timezone);
+        Weather.Day d = om.days.get(0);
+        // Only 13:00 is left at 11:30; the night's 0.5 mm and the daily 8.3 mm stay out.
+        assertEquals(Integer.valueOf(12), d.tempMin);
         assertEquals(Integer.valueOf(12), d.tempMax);
-        assertEquals(Integer.valueOf(10), d.feelsMin);
+        assertEquals(Integer.valueOf(11), d.feelsMin);
+        assertEquals(0.0, d.precipMm, 1e-9);
         assertEquals(Integer.valueOf(1), d.uv);
-        assertEquals(8.3, d.precipMm, 1e-9);
+        // Tomorrow keeps the daily endpoint.
+        assertEquals(Integer.valueOf(7), om.days.get(1).tempMin);
     }
 
     @Test
     public void summaryMergesDayZeroOfEverySource() throws Exception {
         Weather.Summary s = today();
-        // "Today" is Open-Meteo's first day; YR's day 0 is still the 21st, as in Njord.
         assertEquals("2026-10-22", s.date);
         assertEquals(Arrays.asList("YR", "SMHI", "Open-Meteo"), s.sources);
-        assertEquals(Integer.valueOf(11), s.tempMin);    // median of 20, 9, 11
-        assertEquals(Integer.valueOf(13), s.tempMax);    // median of 20, 13, 12
-        assertEquals("5 mm (2.6–8.3)", s.rain);          // YR 5, SMHI 2.6, Open-Meteo 8.3
+        assertEquals(Integer.valueOf(9), s.tempMin);     // median of 8, 9, 12
+        assertEquals(Integer.valueOf(13), s.tempMax);    // median of 13, 13, 12
+        assertEquals("2.2 mm (0–2.6)", s.rain);          // YR 2.2, SMHI 2.6, Open-Meteo 0 for the rest of the day
+        assertEquals(Integer.valueOf(7), s.wind);
         assertEquals(Integer.valueOf(1), s.uv);
-        assertEquals(Integer.valueOf(70), s.humidity);   // median of 50 and 89, half up
+        assertEquals(Integer.valueOf(89), s.humidity);
     }
 
     @Test

@@ -5,6 +5,10 @@ import org.json.JSONObject;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -16,9 +20,10 @@ import java.util.TreeMap;
  * Today's weather exactly as Njord (beta.vitail.app/njord, njord/njord.js in elmacogbg/vitail) shows it in its
  * summary view: YR, SMHI and Open-Meteo merged with medians, a confidence score from how closely they agree, and
  * the expanded day's four six-hour periods. It is a line-by-line port so the TV and the web app show the same
- * numbers, quirks included: YR's and SMHI's UTC timestamps are grouped by their UTC date and hour, Open-Meteo's
- * by local time, and "today" is Open-Meteo's first day. Parsing and merging are plain Java for the JVM tests;
- * only {@link #fetch} touches the network.
+ * numbers: every source grouped by the place's local date and hour (YR's and SMHI's UTC timestamps converted to
+ * the zone Open-Meteo reports), today's Open-Meteo row built from the remaining hours so it covers the same
+ * hours as YR and SMHI, and "today" being Open-Meteo's first day. Parsing and merging are plain Java for the JVM
+ * tests; only {@link #fetch} touches the network.
  */
 final class Weather {
 
@@ -49,6 +54,8 @@ final class Weather {
         final String name;
         final List<Day> days = new ArrayList<>();
         final List<PeriodEntry> periods = new ArrayList<>();
+        /** Open-Meteo only: the place's IANA zone, which YR and SMHI are grouped in. */
+        String timezone;
 
         Source(String name) { this.name = name; }
     }
@@ -93,16 +100,16 @@ final class Weather {
         int slot;
     }
 
-    /** api.met.no locationforecast/2.0/compact, njord.js fetchYr. */
-    static Source parseYr(String body) throws Exception {
+    /** api.met.no locationforecast/2.0/compact, njord.js parseYr: UTC timestamps grouped in {@code zone}. */
+    static Source parseYr(String body, ZoneId zone) throws Exception {
         Source src = new Source("YR");
         Map<String, Acc> byDate = new TreeMap<>(), byPeriod = new TreeMap<>();
         JSONArray ts = new JSONObject(body).getJSONObject("properties").getJSONArray("timeseries");
         for (int i = 0; i < ts.length(); i++) {
             JSONObject e = ts.getJSONObject(i);
-            String time = e.getString("time");
-            Acc d = acc(byDate, time.substring(0, 10), 0);
-            Acc p = acc(byPeriod, time.substring(0, 10), slot(time));
+            LocalDateTime local = local(e.getString("time"), zone);
+            Acc d = acc(byDate, local.toLocalDate().toString(), 0);
+            Acc p = acc(byPeriod, local.toLocalDate().toString(), (local.getHour() / 6) * 6);
             JSONObject data = e.getJSONObject("data");
             JSONObject inst = data.getJSONObject("instant").getJSONObject("details");
             Double t = num(inst, "air_temperature"), w = num(inst, "wind_speed"),
@@ -129,17 +136,17 @@ final class Weather {
         return src;
     }
 
-    /** SMHI snow1g/version/1 point forecast, njord.js fetchSmhi. */
-    static Source parseSmhi(String body) throws Exception {
+    /** SMHI snow1g/version/1 point forecast, njord.js parseSmhi: UTC timestamps grouped in {@code zone}. */
+    static Source parseSmhi(String body, ZoneId zone) throws Exception {
         Source src = new Source("SMHI");
         Map<String, Acc> byDate = new TreeMap<>(), byPeriod = new TreeMap<>();
         JSONArray ts = new JSONObject(body).getJSONArray("timeSeries");
         for (int i = 0; i < ts.length(); i++) {
             JSONObject e = ts.optJSONObject(i);
             if (e == null || !e.has("time") || e.optJSONObject("data") == null) continue;
-            String time = e.getString("time");
-            Acc d = acc(byDate, time.substring(0, 10), 0);
-            Acc p = acc(byPeriod, time.substring(0, 10), slot(time));
+            LocalDateTime local = local(e.getString("time"), zone);
+            Acc d = acc(byDate, local.toLocalDate().toString(), 0);
+            Acc p = acc(byPeriod, local.toLocalDate().toString(), (local.getHour() / 6) * 6);
             JSONObject row = e.getJSONObject("data");
             double prc = row.optDouble("precipitation_amount_mean", 0);
             if (Double.isNaN(prc)) prc = 0;
@@ -154,10 +161,35 @@ final class Weather {
         return src;
     }
 
-    /** Open-Meteo daily (the day row) and hourly (the periods) in the place's own time zone, njord.js fetchOpenMeteo. */
-    static Source parseOpenMeteo(String body) throws Exception {
+    /**
+     * Open-Meteo in the place's own time zone, njord.js parseOpenMeteo. Today's row covers the same hours as YR's
+     * and SMHI's, from the current hour to midnight, built from the hourly values; later days use the daily
+     * endpoint, which covers the same full day as the others. UV only exists daily.
+     */
+    static Source parseOpenMeteo(String body, Instant now) throws Exception {
         Source src = new Source("Open-Meteo");
         JSONObject json = new JSONObject(body);
+        String tz = json.optString("timezone", "");
+        src.timezone = tz.isEmpty() ? null : tz;
+        LocalDateTime nowLocal = ZonedDateTime.ofInstant(now, zone(src.timezone)).toLocalDateTime();
+        String today = nowLocal.toLocalDate().toString();
+        JSONObject h = json.optJSONObject("hourly");
+        Acc rest = new Acc();
+        if (h != null) {
+            JSONArray ht = h.getJSONArray("time");
+            for (int i = 0; i < ht.length(); i++) {
+                String t = ht.getString(i);
+                if (!t.startsWith(today) || hour(t) < nowLocal.getHour()) continue;
+                Double temp = num(h.optJSONArray("temperature_2m"), i), feels = num(h.optJSONArray("apparent_temperature"), i);
+                Double w = num(h.optJSONArray("windspeed_10m"), i), dir = num(h.optJSONArray("winddirection_10m"), i);
+                Double rain = num(h.optJSONArray("precipitation"), i);
+                if (temp != null) rest.temps.add(temp);
+                if (w != null) rest.winds.add(w);
+                if (dir != null) rest.dirs.add(dir);
+                if (feels != null) rest.feels.add(feels);
+                if (rain != null) rest.precip += rain;
+            }
+        }
         JSONObject daily = json.getJSONObject("daily");
         JSONArray time = daily.getJSONArray("time");
         for (int i = 0; i < time.length(); i++) {
@@ -172,9 +204,21 @@ final class Weather {
             d.feelsMin = round(num(daily.optJSONArray("apparent_temperature_min"), i));
             d.feelsMax = round(num(daily.optJSONArray("apparent_temperature_max"), i));
             d.uv = round(num(daily.optJSONArray("uv_index_max"), i));
+            if (d.date.equals(today) && !rest.temps.isEmpty()) {
+                d.tempMin = (int) Math.round(Collections.min(rest.temps));
+                d.tempMax = (int) Math.round(Collections.max(rest.temps));
+                d.precipMm = fixed1(rest.precip);
+                if (!rest.winds.isEmpty()) d.windMax = (int) Math.round(Collections.max(rest.winds));
+                Double dir = circularMean(rest.dirs);
+                if (dir != null) d.windDir = dir;
+                if (!rest.feels.isEmpty()) {
+                    d.feelsMin = (int) Math.round(Collections.min(rest.feels));
+                    d.feelsMax = (int) Math.round(Collections.max(rest.feels));
+                }
+            }
+            if (d.date.compareTo(today) < 0) continue;   // Open-Meteo's own today is the first day shown
             src.days.add(d);
         }
-        JSONObject h = json.optJSONObject("hourly");
         if (h != null) {
             Map<String, Acc> byPeriod = new TreeMap<>();
             JSONArray ht = h.getJSONArray("time");
@@ -192,8 +236,26 @@ final class Weather {
     }
 
     private static int slot(String iso) {
-        int hour = iso.length() >= 13 ? Integer.parseInt(iso.substring(11, 13)) : 0;
-        return (hour / 6) * 6;
+        return (hour(iso) / 6) * 6;
+    }
+
+    private static int hour(String iso) {
+        return iso.length() >= 13 ? Integer.parseInt(iso.substring(11, 13)) : 0;
+    }
+
+    /** A UTC timestamp from YR or SMHI as the place's local date and time. */
+    static LocalDateTime local(String isoUtc, ZoneId zone) {
+        return ZonedDateTime.ofInstant(Instant.parse(isoUtc), zone).toLocalDateTime();
+    }
+
+    /** Open-Meteo's zone for the place, or the TV's own when it is missing or unknown. */
+    static ZoneId zone(String tz) {
+        try {
+            if (tz != null) return ZoneId.of(tz);
+        } catch (Exception ignored) {
+            // an id this Android does not know
+        }
+        return ZoneId.systemDefault();
     }
 
     private static Acc acc(Map<String, Acc> map, String date, int slot) {
@@ -508,22 +570,26 @@ final class Weather {
 
     /** All three sources, each allowed to fail on its own. Blocking: call it off the main thread. */
     static Summary fetch(double lat, double lon) {
+        // Open-Meteo first: its answer names the zone YR and SMHI are grouped in.
+        Source om = null;
+        try {
+            om = parseOpenMeteo(Http.get(openMeteoUrl(lat, lon)), Instant.now());
+        } catch (Exception e) {
+            Http.log("Open-Meteo", e);
+        }
+        ZoneId zone = zone(om != null ? om.timezone : null);
         List<Source> sources = new ArrayList<>();
         try {
-            sources.add(parseYr(Http.get(yrUrl(lat, lon))));
+            sources.add(parseYr(Http.get(yrUrl(lat, lon)), zone));
         } catch (Exception e) {
             Http.log("YR", e);
         }
         try {
-            sources.add(parseSmhi(Http.get(smhiUrl(lat, lon))));
+            sources.add(parseSmhi(Http.get(smhiUrl(lat, lon)), zone));
         } catch (Exception e) {
             Http.log("SMHI", e);
         }
-        try {
-            sources.add(parseOpenMeteo(Http.get(openMeteoUrl(lat, lon))));
-        } catch (Exception e) {
-            Http.log("Open-Meteo", e);
-        }
+        sources.add(om);
         return summarize(sources);
     }
 }
