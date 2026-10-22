@@ -423,23 +423,31 @@ final class SagaExtras {
         newsPanel.removeAllViews();
         newsPanel.addView(label("Nyheter  ·  SVT", DIM));
 
-        // A bottom fading edge: the headline cut by the window's lower edge fades out instead of being sliced,
-        // so the column can run down to the weather's last line. Plain views report no fading edge strength.
+        // The headline crossing the window's lower edge fades out instead of being sliced, so the column can run
+        // down to the weather's last line. Drawn here rather than with View's fading edge, which Android skipped:
+        // the children go into a layer and a gradient erases the bottom of it (DST_OUT), over any wallpaper.
         FrameLayout window = new FrameLayout(ctx) {
-            @Override
-            protected float getBottomFadingEdgeStrength() {
-                return 1f;
+            private final android.graphics.Paint fade = new android.graphics.Paint();
+
+            {
+                fade.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT));
             }
 
             @Override
-            protected float getTopFadingEdgeStrength() {
-                return 0f;
+            protected void dispatchDraw(android.graphics.Canvas canvas) {
+                int w = getWidth(), h = getHeight(), len = Math.min(dp(48), h / 2);
+                if (len <= 0) {
+                    super.dispatchDraw(canvas);
+                    return;
+                }
+                int saved = canvas.saveLayer(0, 0, w, h, null);
+                super.dispatchDraw(canvas);
+                fade.setShader(new android.graphics.LinearGradient(0, h - len, 0, h, 0x00000000, 0xFF000000,
+                        android.graphics.Shader.TileMode.CLAMP));
+                canvas.drawRect(0, h - len, w, h, fade);
+                canvas.restoreToCount(saved);
             }
         };
-        window.setVerticalFadingEdgeEnabled(true);
-        // A ViewGroup that draws nothing of its own skips draw() and with it the fading edge; this keeps it.
-        window.setWillNotDraw(false);
-        window.setFadingEdgeLength(dp(48));
         LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0);
         wlp.topMargin = dp(12);
         window.setLayoutParams(wlp);
