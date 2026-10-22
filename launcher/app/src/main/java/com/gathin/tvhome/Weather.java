@@ -85,6 +85,8 @@ final class Weather {
     /** Njord's summary block for one day. Null fields show as "—". */
     static final class Summary {
         String date;
+        /** The place's IANA zone from Open-Meteo; null without Open-Meteo (the TV's own zone then). */
+        String timezone;
         Integer tempMin, tempMax, feelsMin, feelsMax, wind, humidity, uv, confidence;
         Double windDir;
         /** buildSummaryPrecipLine, already formatted: "2.3 mm (2.1–8.3)". */
@@ -351,6 +353,7 @@ final class Weather {
                 hums = new ArrayList<>(), uvs = new ArrayList<>(), mids = new ArrayList<>();
         for (Source s : sources) {
             out.sources.add(s.name);
+            if (s.timezone != null) out.timezone = s.timezone;
             Day d = s.days.get(0);
             if (d.tempMin != null && d.tempMax != null) {
                 mins.add((double) d.tempMin);

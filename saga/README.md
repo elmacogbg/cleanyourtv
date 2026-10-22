@@ -24,6 +24,7 @@ nätverksanrop.
 |---|---|---|
 | `weather_name` | `"Hjuvik"` | Orten. Slås upp i Open-Meteos ortssökning precis som Njord gör, så att TV:n och Njord hämtar för samma punkt. Svaret sparas, så uppslagningen görs en gång |
 | `weather_lat`, `weather_lon` | `57.70`, `11.72` | Valfritt: fasta koordinater i stället för uppslagning |
+| `weather_places` | `[{"name": "Hjuvik", "seconds": 20}, {"name": "Lissabon", "seconds": 10}]` | Flera orter som visas i tur och ordning, var och en sina sekunder. Ersätter `weather_name`; en post kan ha egna `lat`/`lon`. En ort i en annan tidszon visar sin lokala tid i rubriken |
 | `transit_stops` | `["Majvik", "Hjuvik"]` | Hållplatserna. Slås upp i Västtrafiks hållplatssökning; första träffen används och sparas |
 | `transit_to` | `"Centralstationen"` | Dit turerna ska gå |
 | `transit_label` | `"Mot Göteborg"` | Rubriken över avgångarna |

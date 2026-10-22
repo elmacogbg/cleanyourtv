@@ -91,7 +91,7 @@ final class SagaExtras {
     private final SharedPreferences prefs;
     private final Typeface regular, light;
 
-    private final String placeName, newsUrl;
+    private final String newsUrl;
     private final boolean weatherOn, newsOn, transitOn;
     private final List<String> transitStops = new ArrayList<>();
     private final String transitTo, transitLabel, transitApi;
@@ -101,13 +101,30 @@ final class SagaExtras {
     private volatile long vtTokenUntil;
     /** Stop name to Västtrafik gid, looked up once and kept in prefs. */
     private final java.util.Map<String, String> gids = new java.util.concurrent.ConcurrentHashMap<>();
-    /** From the theme, or geocoded from the name the way Njord found it; NaN until known. */
-    private volatile double lat, lon;
+    /** One place the weather cell shows, in turn with the others for its number of seconds. */
+    private static final class Place {
+        final String name;
+        final int seconds;
+        /** From the theme, or geocoded from the name the way Njord found it; NaN until known. */
+        volatile double lat, lon;
+        Weather.Summary summary;
+        long fetchedAt;
+
+        Place(String name, double lat, double lon, int seconds) {
+            this.name = name;
+            this.lat = lat;
+            this.lon = lon;
+            this.seconds = seconds;
+        }
+    }
+
+    private final List<Place> places = new ArrayList<>();
+    /** The place on screen now. */
+    private int shown;
 
     private ExecutorService worker;
     private boolean running;
-    private Weather.Summary weather;
-    private long weatherAt, newsAt;
+    private long newsAt;
     private List<String> headlines = new ArrayList<>();
     private LinearLayout newsList;
     private FrameLayout newsWindow;
@@ -143,18 +160,8 @@ final class SagaExtras {
         this.regular = font(R.font.outfit_regular);
         this.light = font(R.font.outfit_light);
         JSONObject json = Config.overlayJson(ctx);
-        placeName = json != null ? json.optString("weather_name", "").trim() : "";
-        double la = json != null ? json.optDouble("weather_lat", Double.NaN) : Double.NaN;
-        double lo = json != null ? json.optDouble("weather_lon", Double.NaN) : Double.NaN;
-        if ((Double.isNaN(la) || Double.isNaN(lo)) && !placeName.isEmpty()
-                && placeName.equals(prefs.getString("geo_name", null))) {
-            // Geocoded before: no lookup at every start.
-            la = Double.longBitsToDouble(prefs.getLong("geo_lat", Double.doubleToLongBits(Double.NaN)));
-            lo = Double.longBitsToDouble(prefs.getLong("geo_lon", Double.doubleToLongBits(Double.NaN)));
-        }
-        lat = la;
-        lon = lo;
-        weatherOn = !placeName.isEmpty() || (!Double.isNaN(la) && !Double.isNaN(lo));
+        readPlaces(json);
+        weatherOn = !places.isEmpty();
         String url = json != null ? json.optString("news_rss", "").trim() : "";
         newsOn = url.startsWith("https://");
         newsUrl = url;
@@ -204,8 +211,8 @@ final class SagaExtras {
         });
         long now = System.currentTimeMillis();
         if (weatherOn) {
-            if (now - weatherAt >= WEATHER_EVERY_MS) fetchWeather();
-            else scheduleWeather(WEATHER_EVERY_MS - (now - weatherAt));
+            fetchWeather();   // fetches only the places that are due, then schedules itself
+            if (current() != null && current().summary != null) showNextWithData(false);
         }
         if (newsOn) {
             if (now - newsAt >= NEWS_EVERY_MS) fetchNews();
@@ -219,6 +226,7 @@ final class SagaExtras {
     void stop() {
         running = false;
         main.removeCallbacks(weatherTick);
+        main.removeCallbacks(rotateTick);
         main.removeCallbacks(newsTick);
         main.removeCallbacks(rollTick);
         main.removeCallbacks(transitTick);
@@ -231,78 +239,170 @@ final class SagaExtras {
 
     /** Called with the clock, once a minute: moves the gold mark and dims the periods that are over. */
     void minute() {
-        if (weather != null) renderWeather(weather);
+        Place p = current();
+        if (p != null && p.summary != null) renderWeather(p, false);
     }
 
     /** The race-weekend panel sits in the weather's spot; it wins while it is shown. */
     void setCovered(boolean covered) {
-        if (weatherOn && weather != null) weatherPanel.setVisibility(covered ? View.GONE : View.VISIBLE);
+        Place p = current();
+        if (weatherOn && p != null && p.summary != null) weatherPanel.setVisibility(covered ? View.GONE : View.VISIBLE);
     }
 
     // ---- weather -------------------------------------------------------------------------------------------
 
+    /**
+     * weather_places: [{"name": "Hjuvik", "seconds": 20}, {"name": "Lissabon", "seconds": 10}], shown in turn;
+     * an entry may be a bare name and may carry lat/lon. Without it, the single weather_name (and weather_lat,
+     * weather_lon) as before. A place's geocoded position is kept in prefs, so it is looked up once.
+     */
+    private void readPlaces(JSONObject json) {
+        if (json == null) return;
+        org.json.JSONArray list = json.optJSONArray("weather_places");
+        if (list != null) {
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject o = list.optJSONObject(i);
+                String name = o != null ? o.optString("name", "").trim() : list.optString(i, "").trim();
+                if (name.isEmpty()) continue;
+                int seconds = o != null ? Math.max(3, o.optInt("seconds", 15)) : 15;
+                addPlace(name, o != null ? o.optDouble("lat", Double.NaN) : Double.NaN,
+                        o != null ? o.optDouble("lon", Double.NaN) : Double.NaN, seconds);
+            }
+            return;
+        }
+        String name = json.optString("weather_name", "").trim();
+        double la = json.optDouble("weather_lat", Double.NaN), lo = json.optDouble("weather_lon", Double.NaN);
+        if (!name.isEmpty() || (!Double.isNaN(la) && !Double.isNaN(lo))) addPlace(name, la, lo, 0);
+    }
+
+    private void addPlace(String name, double la, double lo, int seconds) {
+        if ((Double.isNaN(la) || Double.isNaN(lo)) && !name.isEmpty()) {
+            la = Double.longBitsToDouble(prefs.getLong("geo_lat_" + name, Double.doubleToLongBits(Double.NaN)));
+            lo = Double.longBitsToDouble(prefs.getLong("geo_lon_" + name, Double.doubleToLongBits(Double.NaN)));
+        }
+        places.add(new Place(name, la, lo, seconds));
+    }
+
+    private Place current() {
+        return places.isEmpty() ? null : places.get(Math.min(shown, places.size() - 1));
+    }
+
     private final Runnable weatherTick = this::fetchWeather;
+    private final Runnable rotateTick = this::rotate;
 
     private void scheduleWeather(long delay) {
         main.removeCallbacks(weatherTick);
         if (running) main.postDelayed(weatherTick, delay);
     }
 
+    /** Fetches every place whose data is older than Njord's 30 minutes; one worker job for all of them. */
     private void fetchWeather() {
         if (!running) return;
+        long now = System.currentTimeMillis();
+        List<Place> due = new ArrayList<>();
+        for (Place p : places) if (now - p.fetchedAt >= WEATHER_EVERY_MS) due.add(p);
+        if (due.isEmpty()) {
+            scheduleWeather(nextWeatherDelay());
+            return;
+        }
         worker.execute(() -> {
-            Weather.Summary s = null;
-            try {
-                if (Double.isNaN(lat) || Double.isNaN(lon)) geocode();
-                if (!Double.isNaN(lat) && !Double.isNaN(lon)) s = Weather.fetch(lat, lon);
-            } catch (Exception e) {
-                Http.log("weather", e);
-            }
-            Weather.Summary result = s;
-            main.post(() -> {
-                if (result != null) {
-                    weather = result;
-                    weatherAt = System.currentTimeMillis();
-                    renderWeather(result);
-                    scheduleWeather(WEATHER_EVERY_MS);
-                } else {
-                    scheduleWeather(RETRY_MS);
+            List<Weather.Summary> results = new ArrayList<>();
+            for (Place p : due) {
+                Weather.Summary s = null;
+                try {
+                    if (Double.isNaN(p.lat) || Double.isNaN(p.lon)) geocode(p);
+                    if (!Double.isNaN(p.lat) && !Double.isNaN(p.lon)) s = Weather.fetch(p.lat, p.lon);
+                } catch (Exception e) {
+                    Http.log("weather " + p.name, e);
                 }
+                results.add(s);
+            }
+            main.post(() -> {
+                boolean failed = false;
+                for (int i = 0; i < due.size(); i++) {
+                    Weather.Summary s = results.get(i);
+                    if (s == null) {
+                        failed = true;
+                        continue;
+                    }
+                    due.get(i).summary = s;
+                    due.get(i).fetchedAt = System.currentTimeMillis();
+                }
+                Place shownPlace = current();
+                if (shownPlace == null || shownPlace.summary == null) showNextWithData(false);
+                else renderWeather(shownPlace, false);
+                scheduleWeather(failed ? RETRY_MS : nextWeatherDelay());
             });
         });
     }
 
-    /** Worker thread: looks the name up once, as Njord's search did, and keeps the answer. */
-    private void geocode() throws Exception {
-        double[] ll = Weather.parseGeocode(Http.get(Weather.geocodeUrl(placeName)));
-        if (ll == null) return;
-        lat = ll[0];
-        lon = ll[1];
-        prefs.edit().putString("geo_name", placeName)
-                .putLong("geo_lat", Double.doubleToLongBits(ll[0]))
-                .putLong("geo_lon", Double.doubleToLongBits(ll[1])).apply();
+    private long nextWeatherDelay() {
+        long now = System.currentTimeMillis(), next = WEATHER_EVERY_MS;
+        for (Place p : places) next = Math.min(next, Math.max(0, p.fetchedAt + WEATHER_EVERY_MS - now));
+        return next;
     }
 
-    private void renderWeather(Weather.Summary s) {
-        // A summary from yesterday (Home stayed up across midnight) is not today's weather: hide it and fetch.
-        if (!LocalDate.now().toString().equals(s.date)) {
-            weatherPanel.setVisibility(View.GONE);
-            weather = null;
-            weatherAt = 0;
+    /** Worker thread: looks the place's name up once, as Njord's search did, and keeps the answer. */
+    private void geocode(Place p) throws Exception {
+        double[] ll = Weather.parseGeocode(Http.get(Weather.geocodeUrl(p.name)));
+        if (ll == null) return;
+        p.lat = ll[0];
+        p.lon = ll[1];
+        prefs.edit().putLong("geo_lat_" + p.name, Double.doubleToLongBits(ll[0]))
+                .putLong("geo_lon_" + p.name, Double.doubleToLongBits(ll[1])).apply();
+    }
+
+    /** The next place in turn, after the one shown for its seconds. */
+    private void rotate() {
+        if (!running || places.size() < 2) return;
+        showNextWithData(true);
+    }
+
+    private void showNextWithData(boolean advance) {
+        for (int step = advance ? 1 : 0; step <= places.size(); step++) {
+            int i = (shown + step) % places.size();
+            if (places.get(i).summary != null) {
+                boolean changed = i != shown;
+                shown = i;
+                renderWeather(places.get(i), changed);
+                break;
+            }
+        }
+        main.removeCallbacks(rotateTick);
+        Place p = current();
+        if (running && places.size() > 1 && p != null) main.postDelayed(rotateTick, Math.max(3, p.seconds) * 1000L);
+    }
+
+    private void renderWeather(Place place, boolean fade) {
+        Weather.Summary s = place.summary;
+        if (s == null) return;
+        java.time.ZoneId zone = Weather.zone(s.timezone);
+        // A summary from yesterday (Home stayed up across the place's midnight) is not today's weather.
+        if (!LocalDate.now(zone).toString().equals(s.date)) {
+            place.summary = null;
+            place.fetchedAt = 0;
             scheduleWeather(0);
+            if (places.size() == 1) weatherPanel.setVisibility(View.GONE);
             return;
         }
+        String placeName = place.name;
+        int hour = LocalTime.now(zone).getHour();
         weatherPanel.removeAllViews();
 
         // HJUVIK  ·  SÄKERHET 99 %: Njord's agreement badge, named; a bare percentage next to a place says nothing.
-        String kicker = (placeName.isEmpty() ? "Väder" : placeName)
-                + (s.confidence != null ? "  ·  Säkerhet " + s.confidence + " %" : "");
-        weatherPanel.addView(label(kicker, DIM));
+        // A place in another time zone also says what time it is there: LISSABON  ·  11:52  ·  SÄKERHET 96 %.
+        StringBuilder kicker = new StringBuilder(placeName.isEmpty() ? "Väder" : placeName);
+        if (!zone.getRules().getOffset(java.time.Instant.now())
+                .equals(java.time.ZoneId.systemDefault().getRules().getOffset(java.time.Instant.now()))) {
+            kicker.append("  ·  ").append(LocalTime.now(zone).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")));
+        }
+        if (s.confidence != null) kicker.append("  ·  Säkerhet ").append(s.confidence).append(" %");
+        weatherPanel.addView(label(kicker.toString(), DIM));
 
         // [icon] 11° / 12°: the icon is the period we are in now, in gold, so it says what it looks like outside.
         TextView h = text(Weather.temp(s.tempMin, s.tempMax), DISPLAY_SP, WHITE, light);
         h.setIncludeFontPadding(false);
-        withIcon(h, currentIcon(s), 40, GOLD, 14);
+        withIcon(h, currentIcon(s, hour), 40, GOLD, 14);
         lp(h).topMargin = dp(10);
         weatherPanel.addView(h);
 
@@ -329,7 +429,6 @@ final class SagaExtras {
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         gridLp.topMargin = dp(16);
         grid.setLayoutParams(gridLp);
-        int hour = LocalTime.now().getHour();
         for (Weather.Period p : s.periods) {
             boolean today = p.date.equals(s.date);
             if (today && hour >= p.slot) continue;   // over, or the one we are in now
@@ -351,6 +450,16 @@ final class SagaExtras {
         }
         if (grid.getChildCount() > 0) weatherPanel.addView(grid);
         weatherPanel.setVisibility(View.VISIBLE);
+        // The tallest place sets the cell's height, so the news beside it does not jump at every turn.
+        weatherPanel.post(() -> {
+            if (weatherPanel.getHeight() > weatherPanel.getMinimumHeight()) {
+                weatherPanel.setMinimumHeight(weatherPanel.getHeight());
+            }
+        });
+        if (fade) {
+            weatherPanel.setAlpha(0f);
+            weatherPanel.animate().alpha(1f).setDuration(400).start();
+        }
     }
 
     /**
@@ -378,8 +487,7 @@ final class SagaExtras {
     }
 
     /** The icon of the period we are in now. */
-    private static String currentIcon(Weather.Summary s) {
-        int hour = LocalTime.now().getHour();
+    private static String currentIcon(Weather.Summary s, int hour) {
         for (Weather.Period p : s.periods) {
             if (p.date.equals(s.date) && hour >= p.slot && hour < p.slot + 6) {
                 return Weather.icon(p.symbol, p.precip);

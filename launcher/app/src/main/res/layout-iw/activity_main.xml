@@ -380,7 +380,7 @@
                     android:id="@+id/btnInputs"
                     style="@style/TopButton"
                     android:text="@string/inputs"
-                    android:drawableStart="@drawable/ic_input"
+                    android:drawableStart="@drawable/ic_source"
                     android:nextFocusDown="@+id/grid" />
             </LinearLayout>
         </RelativeLayout>
