@@ -520,6 +520,17 @@ final class Config {
         return json;
     }
 
+    /**
+     * The theme's config.json for the keys only this fork reads (SagaExtras), so Config's constructor stays as
+     * upstream has it. Same file and fallback copy as {@link #load}; null when there is no overlay.
+     */
+    static JSONObject overlayJson(Context ctx) {
+        File dir = dir(ctx);
+        boolean mounted = Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState());
+        JSONObject json = mounted && dir != null ? read(new File(dir, FILE_NAME)) : null;
+        return json != null ? json : read(new File(ctx.getFilesDir(), FILE_NAME));
+    }
+
     private static JSONObject read(File file) {
         if (file == null || !file.isFile()) return null;
         if (file.length() > 64 * 1024) {

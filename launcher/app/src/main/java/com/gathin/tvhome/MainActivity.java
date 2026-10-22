@@ -170,6 +170,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private List<RaceWeekend.Race> raceCalendar;
     private View racePanel;
     private TextView raceKicker, raceHeadline, raceSessions;
+    /** This fork: weather under the clock and the news ticker; idle unless the theme turns them on. */
+    private SagaExtras extras;
     /** config.xml show_stats, overridable by a theme. Off: the line is gone and nothing is read. */
     private boolean showStats;
     private boolean shamsi;
@@ -322,6 +324,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         public void run() {
             updateGreeting();
             updateRace();
+            extras.minute();
             // The pill follows the network callbacks and each return to Home; only the diya's flame follows the
             // signal level, so only it needs this minute's binder calls (about 7 ms on the UI thread).
             if (festive) updateWifiLabel();
@@ -415,6 +418,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         raceKicker = findViewById(R.id.raceKicker);
         raceHeadline = findViewById(R.id.raceHeadline);
         raceSessions = findViewById(R.id.raceSessions);
+        extras = new SagaExtras(this, findViewById(R.id.weatherPanel), findViewById(R.id.newsTicker));
         showStats = cfg.showStats;
         shamsi = cfg.shamsiDate;
         greetingName = cfg.greetingName;
@@ -587,6 +591,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             if (cfg.wifiLabelWidth > 0) btnWifi.setMaxWidth(Math.round(cfg.wifiLabelWidth * density));
             else makeIconOnly(btnWifi);
             makeIconOnly((TextView) btnSettings);
+            // This fork: the Inputs pill goes round too, so the top bar is one row of matching icons.
+            makeIconOnly((TextView) btnInputs);
         }
         btnSettings.setOnLongClickListener(v -> {
             showSettingsMenu();
@@ -783,6 +789,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             pillsShown = true;
         }
         if (showStats) startStats();
+        extras.start();
         sky.update();
         wallpaperPlayer.start();
         handler.postDelayed(minuteTick, MINUTE_MS);
@@ -935,6 +942,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         heroArt.animate().cancel();
         handler.removeCallbacks(minuteTick);
         stopStats();
+        extras.stop();
         if (diya != null) diya.stop();
         cancelPendingFocusScroll();
         // Nothing of ours stays on screen over another app; an undecided prompt simply returns next time.
@@ -2130,6 +2138,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void updateRace() {
         if (raceCalendar.isEmpty()) return;
         RaceWeekend.State s = RaceWeekend.at(raceCalendar, java.time.Instant.now());
+        extras.setCovered(s != null);   // both panels sit under the clock; the race weekend wins
         if (s == null) {
             racePanel.setVisibility(View.GONE);
             return;

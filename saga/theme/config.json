@@ -1,0 +1,42 @@
+{
+  "dock_apps": [
+    "se.sagatv",
+    "se.svt.android.svtplay",
+    "com.google.android.youtube.tv",
+    "com.spotify.tv.android",
+    "com.ottplay.ottplay",
+    "com.alphainventor.filemanager",
+    "com.android.vending"
+  ],
+  "fill_dock": false,
+  "columns": 7,
+  "rows_below_dock": 0,
+  "dock_title": false,
+  "hidden_apps": [
+    "org.droidtv.playtv",
+    "org.droidtv.contentexplorer",
+    "org.droidtv.philipstvdrawer",
+    "org.droidtv.nettvbrowser",
+    "org.droidtv.settings",
+    "org.droidtv.dlna",
+    "org.droidtv.eum",
+    "org.droidtv.channels",
+    "com.android.tv.settings",
+    "com.google.android.katniss",
+    "com.google.android.apps.mediashell",
+    "com.google.android.tvlauncher",
+    "com.google.android.leanbacklauncher"
+  ],
+  "live_tv_package": "org.droidtv.playtv",
+  "background_color": "#0A0A0B",
+  "wallpaper": true,
+  "wallpaper_dim": 0,
+  "dock_opacity": 75,
+  "icon_only_buttons": true,
+  "app_library": true,
+  "library_button": false,
+  "weather_lat": 57.70,
+  "weather_lon": 11.72,
+  "weather_name": "Hjuvik",
+  "news_rss": "https://www.svt.se/nyheter/rss.xml"
+}
