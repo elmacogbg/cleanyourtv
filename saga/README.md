@@ -10,7 +10,7 @@ hämta in.
 |---|---|
 | **Väder** under klockan: dagens min/max, vind, nederbörd och de fyra sextimmarsperioderna, sammanvägt från YR, SMHI och Open-Meteo med median och säkerhetsprocent, på samma sätt som [Njord](https://beta.vitail.app/njord) | `Weather.java`, `SagaExtras.java` |
 | **Nyheter** i en kolumn till höger som rullar uppåt en rubrik i taget, från SVT Nyheters RSS | `News.java`, `SagaExtras.java` |
-| **Avgångar** mot stan överst i högerkolumnen, ovanför nyheterna: nästa två turer per hållplats, i realtid med försening, via Sleipners API på beta.vitail.app (Västtrafiks nycklar stannar på servern) | `Transit.java`, `SagaExtras.java` |
+| **Avgångar** mot stan i sidhuvudet, mittemot klockan: nästa två turer per hållplats, i realtid med försening, via Sleipners API på beta.vitail.app (Västtrafiks nycklar stannar på servern) | `Transit.java`, `SagaExtras.java` |
 | **Svensk översättning** av hela launchern: hälsningen, knapparna, menyerna och appbiblioteket | `res/values-sv/strings.xml` |
 | **Källknappen som rund ikon**, som Wi-Fi och Inställningar, när `icon_only_buttons` är på | `MainActivity.java` |
 | **`INTERNET`-behörighet**, som väder och nyheter behöver. Originalet har ingen nätverksåtkomst | `AndroidManifest.xml` |
@@ -27,6 +27,7 @@ nätverksanrop.
 | `transit_stops` | `["Majvik", "Hjuvik"]` | Hållplatserna. Slås upp i Västtrafiks hållplatssökning; första träffen används och sparas |
 | `transit_to` | `"Centralstationen"` | Dit turerna ska gå |
 | `transit_label` | `"Mot Göteborg"` | Rubriken över avgångarna |
+| `buttons_bottom` | `true` | Knapparna (källor, Wi-Fi, appbibliotek, inställningar) i en rad under dockan i stället för uppe till höger; appbibliotekets ruta efter sista raden försvinner. Kräver `library_button: true` för att biblioteket ska finnas kvar |
 | `news_rss` | `"https://www.svt.se/nyheter/rss.xml"` | RSS-flöde för nyhetsraden, måste vara https |
 
 Vädret hämtas var 30:e minut och nyheterna var 15:e, bara medan hemskärmen syns. Ett misslyckat anrop

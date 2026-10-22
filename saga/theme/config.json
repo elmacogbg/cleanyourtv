@@ -34,7 +34,7 @@
   "dock_opacity": 75,
   "icon_only_buttons": true,
   "app_library": true,
-  "library_button": false,
+  "library_button": true,
   "weather_name": "Hjuvik",
   "news_rss": "https://www.svt.se/nyheter/rss.xml",
   "transit_stops": [
@@ -42,5 +42,6 @@
     "Hjuvik"
   ],
   "transit_to": "Centralstationen",
-  "transit_label": "Mot Göteborg"
+  "transit_label": "Mot Göteborg",
+  "buttons_bottom": true
 }

@@ -51,6 +51,19 @@ import java.util.concurrent.Executors;
  */
 final class SagaExtras {
 
+    // ---- the page grid -------------------------------------------------------------------------------------
+    // Header: the clock on the left, the departures opposite it where the pills were. Two cells under it, each
+    // CELL_DP wide with a GUTTER_DP gap: the weather, the news. The dock, then the pill bar (buttons_bottom).
+    static final int CELL_DP = 400, GUTTER_DP = 40, PAGE_MARGIN_DP = 60;
+    /** Room under the dock for the pill bar: its 42dp pills, BAR_MARGIN_DP under them, and a gap above. */
+    static final float BAR_ROOM_DP = 50, BAR_MARGIN_DP = 14;
+
+    /** Theme key buttons_bottom: the pills in a bar under the dock, the app library one of them. */
+    static boolean buttonsBottom(Context ctx) {
+        JSONObject json = Config.overlayJson(ctx);
+        return json != null && json.optBoolean("buttons_bottom", false);
+    }
+
     // ---- the type scale ------------------------------------------------------------------------------------
     private static final int LABEL_SP = 14, BODY_SP = 17, DISPLAY_SP = 34;
     private static final float LABEL_SPACING = 0.14f;   // the date line's letterSpacing
@@ -70,7 +83,8 @@ final class SagaExtras {
 
     private final Context ctx;
     private final LinearLayout weatherPanel, column, newsPanel, transitPanel;
-    private static final int SECTION_GAP_DP = 28;
+    /** The header's top: level with the greeting above the clock. */
+    private static final int HEADER_TOP_DP = 30;
     private List<List<Transit.Departure>> lastDepartures;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final float density;
@@ -105,17 +119,24 @@ final class SagaExtras {
         this.weatherPanel = weatherPanel;
         this.column = column;
         this.density = ctx.getResources().getDisplayMetrics().density;
-        // The right-hand column: departures on top (what you leave for), news under them (what you glance at).
-        this.transitPanel = new LinearLayout(ctx);
+        // The right-hand cell holds the news. The departures go in the header opposite the clock, where you look
+        // for the time: what you leave for sits next to what time it is.
         this.newsPanel = new LinearLayout(ctx);
-        for (LinearLayout block : new LinearLayout[]{transitPanel, newsPanel}) {
-            block.setOrientation(LinearLayout.VERTICAL);
-            block.setLayoutParams(new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            block.setVisibility(View.GONE);
-            column.addView(block);
+        newsPanel.setOrientation(LinearLayout.VERTICAL);
+        newsPanel.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        newsPanel.setVisibility(View.GONE);
+        column.addView(newsPanel);
+        this.transitPanel = new LinearLayout(ctx);
+        transitPanel.setOrientation(LinearLayout.VERTICAL);
+        transitPanel.setVisibility(View.GONE);
+        if (column.getParent() instanceof FrameLayout) {
+            FrameLayout.LayoutParams tlp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+            tlp.topMargin = dp(HEADER_TOP_DP);
+            tlp.setMarginEnd(dp(PAGE_MARGIN_DP));
+            ((FrameLayout) column.getParent()).addView(transitPanel, tlp);
         }
-        ((LinearLayout.LayoutParams) transitPanel.getLayoutParams()).bottomMargin = dp(SECTION_GAP_DP);
         this.prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         this.regular = font(R.font.outfit_regular);
         this.light = font(R.font.outfit_light);
@@ -310,11 +331,11 @@ final class SagaExtras {
             boolean current = hour >= p.slot && !over;
             LinearLayout col = new LinearLayout(ctx);
             col.setOrientation(LinearLayout.VERTICAL);
-            col.setMinimumWidth(dp(112));
+            col.setMinimumWidth(dp(CELL_DP / 4));
             col.setAlpha(over ? 0.35f : 1f);
             col.addView(label(Weather.slotLabel(p.slot), current ? GOLD : DIM));
             TextView t = text(Weather.temp(p.tempMin, p.tempMax), BODY_SP, WHITE, light);
-            withIcon(t, Weather.icon(p.symbol, p.precip), 22, WHITE, 8);
+            withIcon(t, Weather.icon(p.symbol, p.precip), 20, WHITE, 6);
             lp(t).topMargin = dp(6);
             col.addView(t);
             TextView w = text(Weather.wind(p.wind, p.windDir), BODY_SP, DIM, light);
@@ -488,8 +509,8 @@ final class SagaExtras {
     }
 
     /**
-     * Sizes the headline window so the column (departures, then news) ends level with the bottom of the weather,
-     * or at the layout's height without weather. The headline crossing that edge fades out through the window's
+     * Sizes the headline window so the news cell ends level with the bottom of the weather cell, or at the
+     * layout's height without weather. The headline crossing that edge fades out through the window's
      * fading edge.
      */
     private void fitNews() {
@@ -501,13 +522,6 @@ final class SagaExtras {
         }
         int total = weatherPanel.getVisibility() == View.VISIBLE && weatherPanel.getHeight() > 0
                 ? weatherPanel.getHeight() : newsDefaultHeight;
-        if (transitPanel.getVisibility() == View.VISIBLE) {
-            if (transitPanel.getHeight() == 0) {
-                transitPanel.post(this::fitNews);
-                return;
-            }
-            total -= transitPanel.getHeight() + dp(SECTION_GAP_DP);
-        }
         LinearLayout.LayoutParams wlp = (LinearLayout.LayoutParams) newsWindow.getLayoutParams();
         int height = Math.max(0, total - header.getHeight() - wlp.topMargin);
         if (wlp.height != height) {
@@ -707,8 +721,6 @@ final class SagaExtras {
             transitPanel.addView(row);
         }
         transitPanel.setVisibility(transitPanel.getChildCount() > 1 ? View.VISIBLE : View.GONE);
-        if (transitPanel.getVisibility() == View.VISIBLE) column.setVisibility(View.VISIBLE);
-        transitPanel.post(this::fitNews);
     }
 
     /** "34  12:02 · 7 min": the line dim, the time white, a delay or cancellation in gold, minutes for the first. */

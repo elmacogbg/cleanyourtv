@@ -170,8 +170,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private List<RaceWeekend.Race> raceCalendar;
     private View racePanel;
     private TextView raceKicker, raceHeadline, raceSessions;
-    /** This fork: weather under the clock and the news ticker; idle unless the theme turns them on. */
+    /** This fork: weather, departures and news; idle unless the theme turns them on. */
     private SagaExtras extras;
+    /** This fork (theme buttons_bottom): the pills sit in a bar under the dock instead of at the top right. */
+    private boolean buttonsBottom;
     /** config.xml show_stats, overridable by a theme. Off: the line is gone and nothing is read. */
     private boolean showStats;
     private boolean shamsi;
@@ -341,6 +343,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         density = getResources().getDisplayMetrics().density;
         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
         Config cfg = Config.load(this);
+        buttonsBottom = SagaExtras.buttonsBottom(this);
         applyViewInputsHandler(cfg.handleViewInputs);
         settingsKeycodes = cfg.settingsKeycodes;
         settingsKeyPanel = cfg.settingsKeyPanel;
@@ -515,7 +518,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // Keep the hero below the header when the library is enabled on a short screen,
             // even when the theme requests an extra visible row below the dock.
             int shelfClearance = cfg.appLibrary ? hero.getMeasuredHeight() + (int) (40 * density) : 0;
-            int want = Math.max(shelfClearance, h - dockRow - gridRows - (int) (AppAdapter.BOTTOM_ROOM_DP * density));
+            float bottomRoom = buttonsBottom ? SagaExtras.BAR_ROOM_DP : AppAdapter.BOTTOM_ROOM_DP;
+            int want = Math.max(shelfClearance, h - dockRow - gridRows - (int) (bottomRoom * density));
             // Where the rows cannot fit even at the smallest tile (3 rows with the title on), the title keeps its
             // room above the dock and the last rows run off the bottom instead of the title drawing over the clock.
             if (MainActivity.this.dockRow && cfg.dockTitle && rowsBelowDock > 0) want = Math.max(want, (int) (AppAdapter.TITLE_ROOM_DP * density));
@@ -604,10 +608,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         boolean rtlMenuBar = getResources().getBoolean(R.bool.rtl_menu_bar);
         View.OnKeyListener pillKeys = (v, keyCode, event) -> {
             if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
-            if (keyCode == KeyEvent.KEYCODE_DPAD_UP) return true;
-            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
-                // Back to the dock tile Up came from, not wherever the focus finder lands.
-                focusTile(lastFocused % COLUMNS);
+            // The bar's way back to the dock: Down from the top, or Up from the bottom bar (buttons_bottom).
+            int towardsDock = buttonsBottom ? KeyEvent.KEYCODE_DPAD_UP : KeyEvent.KEYCODE_DPAD_DOWN;
+            if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                // Back to the dock tile the bar was entered from, not wherever the focus finder lands.
+                if (keyCode == towardsDock) focusTile(lastFocused % COLUMNS);
                 return true;
             }
             int firstButton = btnInputs.getVisibility() == View.VISIBLE ? R.id.btnInputs : firstTopButton().getId();
@@ -629,6 +634,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
         }
         if (festive) applyFestiveSkin((TextView) btnInputs, (TextView) btnSettings);
+        if (buttonsBottom) moveButtonsToBottom();
 
         // Hide the glass when focus leaves the tiles.
         getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
@@ -1955,6 +1961,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             return GridNavigation.atHorizontalEdge(position, rowCount, COLUMNS,
                     rtlAppGrid, keyCode == KeyEvent.KEYCODE_DPAD_LEFT);
         }
+        if (buttonsBottom && position < COLUMNS) {
+            // buttons_bottom: nothing focusable above the dock; Down goes to the bar under it.
+            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                (btnInputs.getVisibility() == View.VISIBLE ? btnInputs : firstTopButton()).requestFocus();
+                grid.playSoundEffect(SoundEffectConstants.NAVIGATION_DOWN);
+            }
+            return true;
+        }
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
             if (position < COLUMNS) return false;          // dock row: let focus move to the top bar
             target = position - COLUMNS;
@@ -1977,6 +1991,21 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         libraryFocusPending = false;
         hideGlass();
         hideHero();
+    }
+
+    /**
+     * buttons_bottom: the pill row leaves the header for a bar centred under the dock, where the app library pill
+     * was. The header then holds only the clock, the date and what SagaExtras puts opposite them.
+     */
+    private void moveButtonsToBottom() {
+        View bar = findViewById(R.id.topButtons);
+        if (!(bar.getParent() instanceof ViewGroup)) return;
+        ((ViewGroup) bar.getParent()).removeView(bar);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL);
+        lp.bottomMargin = Math.round(SagaExtras.BAR_MARGIN_DP * density);
+        root.addView(bar, lp);
     }
 
     /** The first top-bar button after Inputs that is shown: the network pill, Reorder, then Settings (always there). */
