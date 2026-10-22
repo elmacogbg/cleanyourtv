@@ -321,7 +321,8 @@ final class SagaExtras {
         lp(l2).topMargin = dp(4);
         weatherPanel.addView(l2);
 
-        // The expanded day's four periods. The one we are in has a gold label; the ones that are over fade.
+        // What is still to come today. The period we are in is the headline above (its icon), so it is not
+        // repeated here, and the ones that are over are left out: the row only looks ahead.
         LinearLayout grid = new LinearLayout(ctx);
         grid.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams gridLp = new LinearLayout.LayoutParams(
@@ -330,13 +331,11 @@ final class SagaExtras {
         grid.setLayoutParams(gridLp);
         int hour = LocalTime.now().getHour();
         for (Weather.Period p : s.periods) {
-            boolean over = hour >= p.slot + 6;
-            boolean current = hour >= p.slot && !over;
+            if (hour >= p.slot) continue;   // over, or the one we are in now
             LinearLayout col = new LinearLayout(ctx);
             col.setOrientation(LinearLayout.VERTICAL);
             col.setMinimumWidth(dp(CELL_DP / 4));
-            col.setAlpha(over ? 0.35f : 1f);
-            col.addView(label(Weather.slotLabel(p.slot), current ? GOLD : DIM));
+            col.addView(label(Weather.slotLabel(p.slot), DIM));
             TextView t = text(Weather.temp(p.tempMin, p.tempMax), BODY_SP, WHITE, light);
             withIcon(t, Weather.icon(p.symbol, p.precip), 20, WHITE, 6);
             lp(t).topMargin = dp(6);
