@@ -55,7 +55,9 @@ URI=content://$PKG.theme
 TMP=/data/local/tmp/cyt-theme
 # A file's staging path; wallpapers/a.jpg is staged as $TMP-wallpapers-a.jpg.
 stage() { echo "$TMP-${1//\//-}"; }
-put() { echo "rm -f $DIR/$1 2>/dev/null; content write --uri $URI/$1 < $(stage "$1") 2>/dev/null || cp $(stage "$1") $DIR/$1 2>/dev/null; rm -f $(stage "$1")"; }
+# Android 8 has no `content write`: it prints its usage and "[ERROR] Unsupported operation: write" but exits 0, so
+# the || never reached cp and the theme silently went missing (Philips TPM171E). Trust the file, not the exit code.
+put() { echo "rm -f $DIR/$1 2>/dev/null; { content write --uri $URI/$1 < $(stage "$1") >/dev/null 2>&1; [ -s $DIR/$1 ]; } || cp $(stage "$1") $DIR/$1 2>/dev/null; rm -f $(stage "$1")"; }
 del() { echo "rm -f $DIR/$1 2>/dev/null; content delete --uri $URI/$1 2>/dev/null"; }
 
 if [ "${1:-}" = --reset ]; then
