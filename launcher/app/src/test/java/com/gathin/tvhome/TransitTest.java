@@ -48,6 +48,37 @@ public class TransitTest {
         assertNull(Transit.parseStopGid("{\"stops\":[]}"));
     }
 
+    // Västtrafik /journeys, the shape vitail_vasttrafik.py reads: a two-leg trip with a cancelled second leg.
+    private static final String JOURNEYS = "{\"results\":["
+            + "{\"isDeparted\":false,\"tripLegs\":[{\"origin\":{\"plannedTime\":\"2026-10-22T12:05:00+02:00\",\"estimatedTime\":\"2026-10-22T12:07:00+02:00\"},"
+            + "\"serviceJourney\":{\"line\":{\"shortName\":\"22\"}}},{\"isCancelled\":true,\"origin\":{\"plannedTime\":\"2026-10-22T12:30:00+02:00\"},"
+            + "\"serviceJourney\":{\"line\":{\"shortName\":\"16\"}}}]},"
+            + "{\"isDeparted\":false,\"tripLegs\":[]},"
+            + "{\"isDeparted\":false,\"tripLegs\":[{\"origin\":{\"plannedTime\":\"2026-10-22T12:35:00+02:00\"},\"serviceJourney\":{\"line\":{\"name\":\"Buss 22\"}}}]}"
+            + "]}";
+
+    @Test
+    public void directJourneysReadLikeSleipnerTrips() throws Exception {
+        List<Transit.Departure> d = Transit.parseTrips(Transit.journeysAsTrips(JOURNEYS), NOW, 2);
+        assertEquals(2, d.size());
+        assertEquals("22", d.get(0).line);
+        assertEquals("12:07", d.get(0).clock(STOCKHOLM));
+        assertEquals(2, d.get(0).minutesLate());
+        assertTrue(d.get(0).cancelled);
+        assertEquals("Buss 22", d.get(1).line);
+    }
+
+    @Test
+    public void directHelpers() throws Exception {
+        assertEquals("Basic aWQ6c2VjcmV0", Transit.basicAuth("id", "secret"));
+        assertEquals("abc", Transit.parseToken("{\"access_token\":\"abc\",\"expires_in\":86400}")[0]);
+        assertNull(Transit.parseToken("{}"));
+        assertEquals("9021014004230000", Transit.parseVtStopGid("{\"results\":[{\"gid\":\"9021014004230000\"}]}"));
+        assertEquals("https://ext-api.vasttrafik.se/pr/v4/journeys?originGid=1&destinationGid=2"
+                        + "&dateTime=2026-10-22T09:15:00Z&dateTimeRelatesTo=departure&limit=30",
+                Transit.vtJourneysUrl("1", "2", NOW));
+    }
+
     @Test
     public void emptyOrMissingTrips() throws Exception {
         assertEquals(0, Transit.parseTrips("{}", NOW, 2).size());

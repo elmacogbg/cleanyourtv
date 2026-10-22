@@ -79,7 +79,11 @@ final class SagaExtras {
     private final boolean weatherOn, newsOn, transitOn;
     private final List<String> transitStops = new ArrayList<>();
     private final String transitTo, transitLabel, transitApi;
-    /** Stop name to Västtrafik gid, looked up once through Sleipner and kept in prefs. */
+    /** The owner's own Västtrafik keys, when given: Home then asks Västtrafik directly instead of Sleipner. */
+    private final String vtId, vtSecret;
+    private volatile String vtToken;
+    private volatile long vtTokenUntil;
+    /** Stop name to Västtrafik gid, looked up once and kept in prefs. */
     private final java.util.Map<String, String> gids = new java.util.concurrent.ConcurrentHashMap<>();
     /** From the theme, or geocoded from the name the way Njord found it; NaN until known. */
     private volatile double lat, lon;
@@ -132,6 +136,9 @@ final class SagaExtras {
         String api = json != null ? json.optString("transit_api", "").trim() : "";
         transitApi = api.startsWith("https://") ? api : Transit.DEFAULT_API;
         transitOn = !transitStops.isEmpty() && !transitTo.isEmpty();
+        importVasttrafikKeys();
+        vtId = prefs.getString("vt_id", "");
+        vtSecret = prefs.getString("vt_secret", "");
         for (String name : transitStops) loadGid(name);
         loadGid(transitTo);
         transitPanel.setVisibility(View.GONE);
@@ -523,6 +530,56 @@ final class SagaExtras {
 
     private final Runnable transitTick = this::fetchTransit;
 
+    /**
+     * vasttrafik.json ({"client_id": "...", "client_secret": "..."}), pushed once next to the theme with adb, is
+     * moved into the launcher's private prefs and deleted: the keys do not stay on shared storage, and they are
+     * never in the theme or in git.
+     */
+    private void importVasttrafikKeys() {
+        java.io.File dir = Config.dir(ctx);
+        java.io.File f = dir == null ? null : new java.io.File(dir, "vasttrafik.json");
+        if (f == null || !f.isFile() || f.length() > 4096) return;
+        try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+            byte[] buf = new byte[(int) f.length()];
+            int n = 0, r;
+            while (n < buf.length && (r = in.read(buf, n, buf.length - n)) > 0) n += r;
+            JSONObject o = new JSONObject(new String(buf, 0, n, java.nio.charset.StandardCharsets.UTF_8));
+            String id = o.optString("client_id", "").trim(), secret = o.optString("client_secret", "").trim();
+            if (!id.isEmpty() && !secret.isEmpty()) {
+                prefs.edit().putString("vt_id", id).putString("vt_secret", secret).commit();
+            }
+        } catch (Exception e) {
+            Http.log("vasttrafik.json", e);
+        }
+        if (!f.delete()) Http.log("vasttrafik.json", new java.io.IOException("could not delete " + f));
+    }
+
+    private boolean direct() {
+        return !vtId.isEmpty() && !vtSecret.isEmpty();
+    }
+
+    /** Worker thread: a valid "Bearer …" header, fetching a token when the last one is about to run out. */
+    private String bearer() throws Exception {
+        if (vtToken != null && System.currentTimeMillis() < vtTokenUntil) return "Bearer " + vtToken;
+        Object[] t = Transit.parseToken(Http.postForm(Transit.VT_TOKEN_URL, Transit.basicAuth(vtId, vtSecret),
+                "grant_type=client_credentials"));
+        if (t == null) throw new java.io.IOException("Västtrafik gave no token");
+        vtToken = (String) t[0];
+        vtTokenUntil = System.currentTimeMillis() + Math.max((Long) t[1] - 60, 30) * 1000L;
+        return "Bearer " + vtToken;
+    }
+
+    /** Worker thread: one GET, direct with the token or through Sleipner; a 401 drops the token for next time. */
+    private String transitGet(String directUrl, String sleipnerUrl) throws Exception {
+        if (!direct()) return Http.get(sleipnerUrl);
+        try {
+            return Http.get(directUrl, bearer());
+        } catch (java.io.IOException e) {
+            if (String.valueOf(e.getMessage()).startsWith("HTTP 401")) vtToken = null;
+            throw e;
+        }
+    }
+
     private void loadGid(String name) {
         String gid = prefs.getString("gid_" + name, null);
         if (gid != null) gids.put(name, gid);
@@ -532,7 +589,8 @@ final class SagaExtras {
     private String gid(String name) throws Exception {
         String gid = gids.get(name);
         if (gid != null) return gid;
-        gid = Transit.parseStopGid(Http.get(Transit.stopsUrl(transitApi, name)));
+        String body = transitGet(Transit.vtStopsUrl(name), Transit.stopsUrl(transitApi, name));
+        gid = direct() ? Transit.parseVtStopGid(body) : Transit.parseStopGid(body);
         if (gid != null) {
             gids.put(name, gid);
             prefs.edit().putString("gid_" + name, gid).apply();
@@ -553,8 +611,11 @@ final class SagaExtras {
                     try {
                         String from = to == null ? null : gid(stop);
                         if (from != null && !from.equals(to)) {
-                            next = Transit.parseTrips(Http.get(Transit.tripsUrl(transitApi, from, to)),
-                                    OffsetDateTime.now(), TRANSIT_NEXT);
+                            OffsetDateTime now = OffsetDateTime.now();
+                            String body = transitGet(Transit.vtJourneysUrl(from, to, now),
+                                    Transit.tripsUrl(transitApi, from, to));
+                            next = Transit.parseTrips(direct() ? Transit.journeysAsTrips(body) : body, now,
+                                    TRANSIT_NEXT);
                             any = true;
                         }
                     } catch (Exception e) {

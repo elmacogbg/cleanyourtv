@@ -42,3 +42,21 @@ TV_HOST=192.168.1.94 tools/theme.sh saga/theme
 ```
 
 `mine` är den här forken (`git remote add mine https://github.com/elmacogbg/cleanyourtv`).
+
+## Västtrafik direkt, utan vitail
+
+Avgångarna går som standard via Sleipner på beta.vitail.app, där Västtrafiks nycklar ligger. Går vitail inte att
+nå kan TV:n fråga Västtrafik direkt med egna nycklar från developer.vasttrafik.se (API:t Planera Resa v4):
+
+```bash
+cat > saga/vasttrafik.json <<'JSON'
+{"client_id": "DIN-CLIENT-ID", "client_secret": "DIN-CLIENT-SECRET"}
+JSON
+adb push saga/vasttrafik.json /sdcard/Android/data/com.gathin.tvhome/files/vasttrafik.json
+rm saga/vasttrafik.json
+adb shell am force-stop com.gathin.tvhome && adb shell input keyevent KEYCODE_HOME
+```
+
+Launchern flyttar nycklarna till sitt privata lagringsutrymme och raderar filen vid nästa start. `saga/vasttrafik.json`
+står i `.gitignore`. Att gå tillbaka till Sleipner: `adb shell pm clear com.gathin.tvhome` (nollställer launcherns
+data, temat läggs på igen med `tools/theme.sh saga/theme`).

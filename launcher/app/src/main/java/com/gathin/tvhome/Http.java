@@ -18,12 +18,36 @@ final class Http {
     private Http() {}
 
     static String get(String url) throws IOException {
+        return request(url, null, null, null);
+    }
+
+    /** GET with an Authorization header (Västtrafik's bearer token). */
+    static String get(String url, String authorization) throws IOException {
+        return request(url, authorization, null, null);
+    }
+
+    /** POST a form body, for Västtrafik's token endpoint. */
+    static String postForm(String url, String authorization, String form) throws IOException {
+        return request(url, authorization, "application/x-www-form-urlencoded", form);
+    }
+
+    private static String request(String url, String authorization, String contentType, String body)
+            throws IOException {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         try {
             c.setConnectTimeout(TIMEOUT_MS);
             c.setReadTimeout(TIMEOUT_MS);
             c.setRequestProperty("User-Agent", USER_AGENT);
             c.setRequestProperty("Accept-Encoding", "identity");
+            if (authorization != null) c.setRequestProperty("Authorization", authorization);
+            if (body != null) {
+                c.setRequestMethod("POST");
+                c.setDoOutput(true);
+                c.setRequestProperty("Content-Type", contentType);
+                try (java.io.OutputStream o = c.getOutputStream()) {
+                    o.write(body.getBytes(StandardCharsets.UTF_8));
+                }
+            }
             int code = c.getResponseCode();
             if (code != 200) throw new IOException("HTTP " + code + " from " + url);
             try (InputStream in = c.getInputStream()) {

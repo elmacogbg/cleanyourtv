@@ -100,6 +100,89 @@ final class Transit {
         return out.size() > max ? new ArrayList<>(out.subList(0, max)) : out;
     }
 
+    // ---- direct: Västtrafik Planera Resa v4 with the owner's own keys, the calls vitail_vasttrafik.py makes ----
+
+    static final String VT_TOKEN_URL = "https://ext-api.vasttrafik.se/token";
+    static final String VT_API = "https://ext-api.vasttrafik.se/pr/v4";
+
+    /** "Basic base64(id:secret)" for the token request. */
+    static String basicAuth(String clientId, String secret) {
+        return "Basic " + java.util.Base64.getEncoder().encodeToString(
+                (clientId + ":" + secret).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /** {access_token, expires_in seconds}; null when the answer has no token. */
+    static Object[] parseToken(String body) throws Exception {
+        JSONObject o = new JSONObject(body);
+        String token = o.optString("access_token", "");
+        if (token.isEmpty()) return null;
+        return new Object[]{token, o.optLong("expires_in", 300)};
+    }
+
+    static String vtStopsUrl(String query) throws java.io.UnsupportedEncodingException {
+        return VT_API + "/locations/by-text?q=" + URLEncoder.encode(query, "UTF-8") + "&types=stoparea&limit=8";
+    }
+
+    /** Journeys planned from 45 minutes ago on, as vitail's live_trips asks, so a late bus is still listed. */
+    static String vtJourneysUrl(String fromGid, String toGid, OffsetDateTime now) {
+        String when = now.minusMinutes(45).toInstant().truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString();
+        return VT_API + "/journeys?originGid=" + fromGid + "&destinationGid=" + toGid
+                + "&dateTime=" + when + "&dateTimeRelatesTo=departure&limit=30";
+    }
+
+    /** /locations/by-text: the first stop area's gid, or null. */
+    static String parseVtStopGid(String body) throws Exception {
+        JSONArray results = new JSONObject(body).optJSONArray("results");
+        if (results == null) return null;
+        for (int i = 0; i < results.length(); i++) {
+            JSONObject r = results.optJSONObject(i);
+            String gid = r == null ? "" : r.optString("gid", "");
+            if (gid.matches("\\d{16}")) return gid;
+        }
+        return null;
+    }
+
+    /**
+     * /journeys turned into Sleipner's trip shape (vitail_vasttrafik._trip) so {@link #parseTrips} reads both: the
+     * first leg's departure, its line, departed, and cancelled when any leg is.
+     */
+    static String journeysAsTrips(String body) throws Exception {
+        JSONArray results = new JSONObject(body).optJSONArray("results");
+        JSONArray trips = new JSONArray();
+        if (results != null) {
+            for (int i = 0; i < results.length(); i++) {
+                JSONObject r = results.optJSONObject(i);
+                JSONArray legs = r == null ? null : r.optJSONArray("tripLegs");
+                if (legs == null || legs.length() == 0) continue;   // walk-only: no vehicle to wait for
+                JSONObject first = legs.optJSONObject(0);
+                JSONObject origin = first == null ? null : first.optJSONObject("origin");
+                String planned = origin == null ? "" : origin.optString("plannedTime", "");
+                if (planned.isEmpty()) continue;
+                boolean cancelled = false;
+                JSONArray lines = new JSONArray();
+                for (int j = 0; j < legs.length(); j++) {
+                    JSONObject leg = legs.optJSONObject(j);
+                    if (leg == null) continue;
+                    cancelled |= leg.optBoolean("isCancelled", false) || leg.optBoolean("isPartCancelled", false);
+                    JSONObject sj = leg.optJSONObject("serviceJourney");
+                    JSONObject line = sj == null ? null : sj.optJSONObject("line");
+                    String name = line == null ? "" : line.optString("shortName", line.optString("name", ""));
+                    if (!name.isEmpty()) lines.put(name);
+                }
+                JSONObject t = new JSONObject();
+                t.put("departed", r.optBoolean("isDeparted", false));
+                t.put("cancelled", cancelled);
+                t.put("lines", lines);
+                t.put("depPlanned", planned);
+                t.put("depEstimated", origin.optString("estimatedTime", ""));
+                trips.put(t);
+            }
+        }
+        JSONObject out = new JSONObject();
+        out.put("trips", trips);
+        return out.toString();
+    }
+
     private static OffsetDateTime time(String iso) {
         if (iso == null || iso.isEmpty() || iso.equals("null")) return null;
         try {

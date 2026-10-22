@@ -17,3 +17,6 @@ work/
 *.aab
 launcher/hs_err_pid*.log
 launcher/replay_pid*.log
+
+# Saga: Västtrafik keys pushed to the TV once, never committed
+saga/vasttrafik.json
