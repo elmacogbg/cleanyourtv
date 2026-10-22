@@ -66,15 +66,6 @@ final class Http {
     }
 
     /** Failures are quiet on screen (the panel keeps its last data or stays hidden) but not in the log. */
-    /** An info line in logcat under SagaExtras, for what the screen cannot show (never a key or token). */
-    static void info(String line) {
-        try {
-            android.util.Log.i("SagaExtras", line);
-        } catch (Throwable ignored) {
-            // JVM unit tests have no android.util.Log.
-        }
-    }
-
     static void log(String what, Exception e) {
         try {
             android.util.Log.w("SagaExtras", what + ": " + e);

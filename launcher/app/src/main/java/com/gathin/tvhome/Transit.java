@@ -146,10 +146,6 @@ final class Transit {
      * out, not in, and is dropped; nothing else is assumed about where a line goes.
      */
     static String departuresAsTrips(String body, List<String> awayStops) throws Exception {
-        return departuresAsTrips(body, awayStops, null);
-    }
-
-    static String departuresAsTrips(String body, List<String> awayStops, StringBuilder seen) throws Exception {
         JSONArray results = new JSONObject(body).optJSONArray("results");
         JSONArray trips = new JSONArray();
         if (results != null) {
@@ -162,12 +158,7 @@ final class Transit {
                 JSONObject line = sj == null ? null : sj.optJSONObject("line");
                 String name = line == null ? "" : line.optString("shortName", line.optString("name", ""));
                 String direction = sj == null ? "" : sj.optString("direction", "");
-                boolean out = headsTo(direction, awayStops);
-                // What the board said, so a missing bus can be explained: "34 13:33 Amhult" or "x6 ... (ut)".
-                if (seen != null) seen.append(i == 0 ? "" : " | ").append(name).append(' ')
-                        .append(planned.length() >= 16 ? planned.substring(11, 16) : planned).append(' ')
-                        .append(direction).append(out ? " (ut)" : "");
-                if (out) continue;
+                if (headsTo(direction, awayStops)) continue;
                 JSONObject t = new JSONObject();
                 t.put("departed", false);
                 t.put("cancelled", r.optBoolean("isCancelled", false) || r.optBoolean("isPartCancelled", false));
