@@ -1,5 +1,7 @@
 package com.gathin.tvhome;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Typeface;
@@ -10,9 +12,13 @@ import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.animation.DecelerateInterpolator;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -20,16 +26,21 @@ import org.json.JSONObject;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * This fork's two additions to Home: today's weather under the clock, the same numbers Njord's summary view shows
- * (see {@link Weather}), and a ticker of news headlines along the bottom edge. Both are off unless the theme's
- * config.json names a place ({@code weather_name}, optionally {@code weather_lat}/{@code weather_lon}) or a feed
- * ({@code news_rss}). Off means nothing runs: no thread, no network.
+ * This fork's two additions to Home: today's weather on the left under the clock, the same numbers Njord's
+ * summary view shows (see {@link Weather}), and news headlines in a column on the right that rolls upward, one
+ * headline at a time. Both are off unless the theme's config.json names a place ({@code weather_name}, optionally
+ * {@code weather_lat}/{@code weather_lon}) or a feed ({@code news_rss}). Off means nothing runs: no thread, no
+ * network.
+ *
+ * <p>Text uses three sizes and no others, so the panels read as one with the clock row: LABEL is the date line's
+ * style (14sp, regular, capitals, spaced), BODY carries every value and headline, DISPLAY is the temperature.
  *
  * <p>Network work happens on one background thread; the views are only touched on the main thread. Fetches
  * repeat while Home is in the foreground and stop with it. A failed fetch keeps the last good data on screen
@@ -37,22 +48,27 @@ import java.util.concurrent.Executors;
  */
 final class SagaExtras {
 
+    // ---- the type scale ------------------------------------------------------------------------------------
+    private static final int LABEL_SP = 14, BODY_SP = 17, DISPLAY_SP = 34;
+    private static final float LABEL_SPACING = 0.14f;   // the date line's letterSpacing
     private static final int GOLD = 0xFFD4A848;
     private static final int WHITE = 0xFFFFFFFF;
-    private static final int DIM = 0x99FFFFFF;
-    private static final int LABEL = 0x80FFFFFF;
+    private static final int DIM = 0xA6FFFFFF;           // the date line's colour; labels and secondary values
+
     private static final long WEATHER_EVERY_MS = 30 * 60_000L;   // Njord's cache lifetime
     private static final long NEWS_EVERY_MS = 15 * 60_000L;
     private static final long RETRY_MS = 5 * 60_000L;
+    private static final long ROLL_EVERY_MS = 6_000L;
+    private static final long ROLL_MS = 700L;
     private static final int NEWS_MAX = 15;
     private static final String PREFS = "saga_extras";
 
     private final Context ctx;
-    private final LinearLayout weatherPanel;
-    private final TextView ticker;
+    private final LinearLayout weatherPanel, newsPanel;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final float density;
     private final SharedPreferences prefs;
+    private final Typeface regular, light;
 
     private final String placeName, newsUrl;
     private final boolean weatherOn, newsOn;
@@ -63,13 +79,18 @@ final class SagaExtras {
     private boolean running;
     private Weather.Summary weather;
     private long weatherAt, newsAt;
+    private List<String> headlines = new ArrayList<>();
+    private LinearLayout newsList;
+    private boolean rolling;
 
-    SagaExtras(Context ctx, LinearLayout weatherPanel, TextView ticker) {
+    SagaExtras(Context ctx, LinearLayout weatherPanel, LinearLayout newsPanel) {
         this.ctx = ctx;
         this.weatherPanel = weatherPanel;
-        this.ticker = ticker;
+        this.newsPanel = newsPanel;
         this.density = ctx.getResources().getDisplayMetrics().density;
         this.prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        this.regular = font(R.font.outfit_regular);
+        this.light = font(R.font.outfit_light);
         JSONObject json = Config.overlayJson(ctx);
         placeName = json != null ? json.optString("weather_name", "").trim() : "";
         double la = json != null ? json.optDouble("weather_lat", Double.NaN) : Double.NaN;
@@ -87,7 +108,7 @@ final class SagaExtras {
         newsOn = url.startsWith("https://");
         newsUrl = url;
         weatherPanel.setVisibility(View.GONE);
-        ticker.setVisibility(View.GONE);
+        newsPanel.setVisibility(View.GONE);
     }
 
     boolean enabled() {
@@ -112,16 +133,21 @@ final class SagaExtras {
         if (newsOn) {
             if (now - newsAt >= NEWS_EVERY_MS) fetchNews();
             else scheduleNews(NEWS_EVERY_MS - (now - newsAt));
-            ticker.setSelected(true);   // the marquee only runs on a selected (or focused) TextView
+            scheduleRoll();
         }
     }
 
-    /** Home went to the background: no more fetches until it is back. */
+    /** Home went to the background: no more fetches and no rolling until it is back. */
     void stop() {
         running = false;
         main.removeCallbacks(weatherTick);
         main.removeCallbacks(newsTick);
-        ticker.setSelected(false);
+        main.removeCallbacks(rollTick);
+        if (newsList != null) {
+            newsList.animate().cancel();
+            newsList.setTranslationY(0);
+        }
+        rolling = false;
     }
 
     /** Called with the clock, once a minute: moves the gold mark and dims the periods that are over. */
@@ -129,7 +155,7 @@ final class SagaExtras {
         if (weather != null) renderWeather(weather);
     }
 
-    /** The race-weekend panel sits in the same spot; it wins while it is shown. */
+    /** The race-weekend panel sits in the weather's spot; it wins while it is shown. */
     void setCovered(boolean covered) {
         if (weatherOn && weather != null) weatherPanel.setVisibility(covered ? View.GONE : View.VISIBLE);
     }
@@ -188,39 +214,39 @@ final class SagaExtras {
             return;
         }
         weatherPanel.removeAllViews();
-        Typeface medium = font(R.font.outfit_medium), light = font(R.font.outfit_light);
 
-        // HJUVIK  ·  98 %
-        StringBuilder kicker = new StringBuilder(placeName.isEmpty() ? "Väder" : placeName);
-        if (s.confidence != null) kicker.append("  ·  ").append(s.confidence).append(" %");
-        TextView k = text(kicker.toString().toUpperCase(Locale.getDefault()), 12, 0xB3FFFFFF, medium);
-        k.setLetterSpacing(0.22f);
-        weatherPanel.addView(k);
+        // HJUVIK  ·  99 %
+        String kicker = (placeName.isEmpty() ? "Väder" : placeName)
+                + (s.confidence != null ? "  ·  " + s.confidence + " %" : "");
+        weatherPanel.addView(label(kicker, DIM));
 
         // [icon] 11° / 12°: the icon is the period we are in now, in gold, so it says what it looks like outside.
-        TextView h = text(Weather.temp(s.tempMin, s.tempMax), 34, WHITE, light);
+        TextView h = text(Weather.temp(s.tempMin, s.tempMax), DISPLAY_SP, WHITE, light);
         h.setIncludeFontPadding(false);
         withIcon(h, currentIcon(s), 40, GOLD, 14);
-        lp(h).topMargin = dp(8);
+        lp(h).topMargin = dp(10);
         weatherPanel.addView(h);
 
-        // KÄNNS 10° / 12°   REGN 2.3 mm (2.1–8.3)   VIND 8 m/s S   FUKT. 89%   UV 1, Njord's rows on one line.
-        SpannableStringBuilder rows = new SpannableStringBuilder();
-        row(rows, "KÄNNS", Weather.temp(s.feelsMin, s.feelsMax));
-        row(rows, "REGN", s.rain == null ? Weather.NA : s.rain);
-        row(rows, "VIND", Weather.wind(s.wind, s.windDir));
-        row(rows, "FUKT.", s.humidity == null ? Weather.NA : s.humidity + "%");
-        row(rows, "UV", s.uv == null ? Weather.NA : String.valueOf(s.uv));
-        TextView d = text(rows, 15, WHITE, medium);
-        lp(d).topMargin = dp(10);
-        weatherPanel.addView(d);
+        // Njord's rows, in two lines so the panel stays on its half of the screen.
+        SpannableStringBuilder line1 = new SpannableStringBuilder(), line2 = new SpannableStringBuilder();
+        row(line1, "Känns", Weather.temp(s.feelsMin, s.feelsMax));
+        row(line1, "Vind", Weather.wind(s.wind, s.windDir));
+        row(line1, "UV", s.uv == null ? Weather.NA : String.valueOf(s.uv));
+        row(line2, "Regn", s.rain == null ? Weather.NA : s.rain);
+        row(line2, "Fukt.", s.humidity == null ? Weather.NA : s.humidity + "%");
+        TextView l1 = text(line1, BODY_SP, WHITE, light);
+        lp(l1).topMargin = dp(14);
+        weatherPanel.addView(l1);
+        TextView l2 = text(line2, BODY_SP, WHITE, light);
+        lp(l2).topMargin = dp(4);
+        weatherPanel.addView(l2);
 
-        // The expanded day's four periods. The one we are in is marked in gold; the ones that are over fade.
+        // The expanded day's four periods. The one we are in has a gold label; the ones that are over fade.
         LinearLayout grid = new LinearLayout(ctx);
         grid.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams gridLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        gridLp.topMargin = dp(16);
+        gridLp.topMargin = dp(18);
         grid.setLayoutParams(gridLp);
         int hour = LocalTime.now().getHour();
         for (Weather.Period p : s.periods) {
@@ -228,31 +254,34 @@ final class SagaExtras {
             boolean current = hour >= p.slot && !over;
             LinearLayout col = new LinearLayout(ctx);
             col.setOrientation(LinearLayout.VERTICAL);
-            col.setMinimumWidth(dp(118));
+            col.setMinimumWidth(dp(112));
             col.setAlpha(over ? 0.35f : 1f);
-            col.addView(text(Weather.slotLabel(p.slot), 12, current ? GOLD : DIM, medium));
-            TextView t = text(Weather.temp(p.tempMin, p.tempMax), 17, WHITE, light);
+            col.addView(label(Weather.slotLabel(p.slot), current ? GOLD : DIM));
+            TextView t = text(Weather.temp(p.tempMin, p.tempMax), BODY_SP, WHITE, light);
             withIcon(t, Weather.icon(p.symbol, p.precip), 22, WHITE, 8);
-            lp(t).topMargin = dp(4);
+            lp(t).topMargin = dp(6);
             col.addView(t);
-            TextView w = text(Weather.wind(p.wind, p.windDir), 12, DIM, medium);
+            TextView w = text(Weather.wind(p.wind, p.windDir), BODY_SP, DIM, light);
             lp(w).topMargin = dp(2);
             col.addView(w);
-            TextView r = text(Weather.periodRain(p.precip), 12, DIM, medium);
-            lp(r).topMargin = dp(1);
-            col.addView(r);
+            col.addView(text(Weather.periodRain(p.precip), BODY_SP, DIM, light));
             grid.addView(col);
         }
         if (grid.getChildCount() > 0) weatherPanel.addView(grid);
         weatherPanel.setVisibility(View.VISIBLE);
     }
 
-    /** "LABEL value" with the label dim, as Njord's grey row labels; a gap before every row but the first. */
-    private static void row(SpannableStringBuilder sb, String label, String value) {
+    /**
+     * "LABEL value": the label at LABEL size and colour inside a BODY line, so both share one baseline. A
+     * TypefaceSpan taking a Typeface needs Android 9, so the label keeps the line's font; size and colour carry it.
+     */
+    private void row(SpannableStringBuilder sb, String label, String value) {
         if (sb.length() > 0) sb.append("     ");
         int start = sb.length();
-        sb.append(label);
-        sb.setSpan(new ForegroundColorSpan(LABEL), start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        sb.append(label.toUpperCase(Locale.getDefault()));
+        int end = sb.length();
+        sb.setSpan(new ForegroundColorSpan(DIM), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        sb.setSpan(new RelativeSizeSpan((float) LABEL_SP / BODY_SP), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         sb.append("  ").append(value);
     }
 
@@ -321,7 +350,7 @@ final class SagaExtras {
             main.post(() -> {
                 if (result != null && !result.isEmpty()) {
                     newsAt = System.currentTimeMillis();
-                    showTicker(result);
+                    showNews(result);
                     scheduleNews(NEWS_EVERY_MS);
                 } else {
                     scheduleNews(RETRY_MS);
@@ -330,23 +359,97 @@ final class SagaExtras {
         });
     }
 
-    private void showTicker(List<String> titles) {
-        String line = News.tickerLine(titles);
-        // Setting the same text again would restart the marquee from the left edge for nothing.
-        if (TextUtils.equals(ticker.getText().toString(), line)) return;
-        SpannableStringBuilder sb = new SpannableStringBuilder(line);
-        // The bullets between headlines in gold, the one accent.
-        for (int i = line.indexOf('•'); i >= 0; i = line.indexOf('•', i + 1)) {
-            sb.setSpan(new ForegroundColorSpan(GOLD), i, i + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    /** The column: a header, then the headlines in a clipped window that {@link #roll} moves up. */
+    private void showNews(List<String> titles) {
+        if (titles.equals(headlines) && newsList != null) return;   // same feed: keep the roll where it is
+        headlines = new ArrayList<>(titles);
+        newsPanel.animate().cancel();
+        newsPanel.removeAllViews();
+        newsPanel.addView(label("Nyheter  ·  SVT", DIM));
+
+        FrameLayout window = new FrameLayout(ctx);
+        LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        wlp.topMargin = dp(12);
+        window.setLayoutParams(wlp);
+        window.setClipChildren(true);
+        newsList = new LinearLayout(ctx);
+        newsList.setOrientation(LinearLayout.VERTICAL);
+        newsList.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        for (String title : headlines) newsList.addView(headline(title));
+        window.addView(newsList);
+        newsPanel.addView(window);
+        newsPanel.setVisibility(View.VISIBLE);
+        rolling = false;
+        scheduleRoll();
+    }
+
+    /** One headline: a gold bullet and up to two lines of BODY text. */
+    private TextView headline(String title) {
+        SpannableStringBuilder sb = new SpannableStringBuilder("•  " + title);
+        sb.setSpan(new ForegroundColorSpan(GOLD), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        TextView t = text(sb, BODY_SP, WHITE, light);
+        t.setSingleLine(false);
+        t.setMaxLines(2);
+        t.setEllipsize(TextUtils.TruncateAt.END);
+        t.setLineSpacing(0, 1.1f);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.bottomMargin = dp(14);
+        t.setLayoutParams(p);
+        return t;
+    }
+
+    private final Runnable rollTick = this::roll;
+
+    private void scheduleRoll() {
+        main.removeCallbacks(rollTick);
+        if (running && headlines.size() > 1) main.postDelayed(rollTick, ROLL_EVERY_MS);
+    }
+
+    /**
+     * Moves the list up by its first headline, then puts that headline last and the list back in place, so the
+     * column keeps rolling through the feed without ever running out. One slide every few seconds, not a
+     * continuous crawl: a headline is read, then the next comes.
+     */
+    private void roll() {
+        if (!running || rolling || newsList == null || newsList.getChildCount() < 2) {
+            scheduleRoll();
+            return;
         }
-        ticker.setText(sb);
-        ticker.setVisibility(View.VISIBLE);
-        ticker.setSelected(running);
+        View first = newsList.getChildAt(0);
+        int step = first.getHeight() + ((LinearLayout.LayoutParams) first.getLayoutParams()).bottomMargin;
+        if (step <= 0) {
+            scheduleRoll();
+            return;
+        }
+        rolling = true;
+        newsList.animate().translationY(-step).setDuration(ROLL_MS).setInterpolator(new DecelerateInterpolator())
+                .setListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        newsList.animate().setListener(null);
+                        if (newsList.getChildCount() > 1 && newsList.getChildAt(0) == first) {
+                            newsList.removeViewAt(0);
+                            newsList.addView(first);
+                        }
+                        newsList.setTranslationY(0);
+                        rolling = false;
+                        scheduleRoll();
+                    }
+                });
     }
 
     // ---- small view helpers --------------------------------------------------------------------------------
 
-    private TextView text(CharSequence s, float sp, int color, Typeface face) {
+    /** The LABEL style: the date line's 14sp regular capitals with its letter spacing. */
+    private TextView label(String s, int color) {
+        TextView t = text(s.toUpperCase(Locale.getDefault()), LABEL_SP, color, regular);
+        t.setLetterSpacing(LABEL_SPACING);
+        return t;
+    }
+
+    private TextView text(CharSequence s, int sp, int color, Typeface face) {
         TextView t = new TextView(ctx);
         t.setText(s);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);

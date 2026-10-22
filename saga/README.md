@@ -9,7 +9,7 @@ hämta in.
 | Ändring | Var |
 |---|---|
 | **Väder** under klockan: dagens min/max, vind, nederbörd och de fyra sextimmarsperioderna, sammanvägt från YR, SMHI och Open-Meteo med median och säkerhetsprocent, på samma sätt som [Njord](https://beta.vitail.app/njord) | `Weather.java`, `SagaExtras.java` |
-| **Rullande nyheter** längs nederkanten, rubriker från SVT Nyheters RSS | `News.java`, `SagaExtras.java` |
+| **Nyheter** i en kolumn till höger som rullar uppåt en rubrik i taget, från SVT Nyheters RSS | `News.java`, `SagaExtras.java` |
 | **Källknappen som rund ikon**, som Wi-Fi och Inställningar, när `icon_only_buttons` är på | `MainActivity.java` |
 | **`INTERNET`-behörighet**, som väder och nyheter behöver. Originalet har ingen nätverksåtkomst | `AndroidManifest.xml` |
 

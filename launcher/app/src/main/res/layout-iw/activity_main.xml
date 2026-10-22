@@ -108,6 +108,20 @@
         android:importantForAccessibility="no"
         android:visibility="gone" />
 
+    <!-- This fork: news headlines (SagaExtras), a column opposite the weather that rolls upward. Filled in code;
+         its height is the space between the clock row and the dock. -->
+    <LinearLayout
+        android:id="@+id/newsPanel"
+        android:layout_width="352dp"
+        android:layout_height="210dp"
+        android:layout_gravity="top|left"
+        android:layout_marginStart="60dp"
+        android:layout_marginTop="158dp"
+        android:orientation="vertical"
+        android:focusable="false"
+        android:importantForAccessibility="no"
+        android:visibility="gone" />
+
     <!-- Cinematic top shelf: darkens the edge behind the shelf and the lower half, so the text and the
          dock stay readable over the artwork. -->
     <View
@@ -393,26 +407,6 @@
                 android:descendantFocusability="afterDescendants" />
         </FrameLayout>
     </LinearLayout>
-
-    <!-- This fork: news headlines scrolling along the bottom edge (SagaExtras). Drawn over the grid. -->
-    <TextView
-        android:id="@+id/newsTicker"
-        android:layout_width="match_parent"
-        android:layout_height="40dp"
-        android:layout_gravity="bottom"
-        android:gravity="center_vertical"
-        android:paddingStart="60dp"
-        android:paddingEnd="60dp"
-        android:background="#B3000000"
-        android:singleLine="true"
-        android:ellipsize="marquee"
-        android:marqueeRepeatLimit="marquee_forever"
-        android:textColor="#D9FFFFFF"
-        android:textSize="16sp"
-        android:fontFamily="@font/outfit_regular"
-        android:focusable="false"
-        android:importantForAccessibility="no"
-        android:visibility="gone" />
 
     <!-- The single floating glass highlight that springs between tiles. -->
     <com.gathin.tvhome.GlassView
