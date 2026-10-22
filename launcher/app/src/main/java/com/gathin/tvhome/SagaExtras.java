@@ -288,6 +288,7 @@ final class SagaExtras {
     }
 
     private final Runnable weatherTick = this::fetchWeather;
+    private boolean weatherBusy;
     private final Runnable rotateTick = this::rotate;
 
     private void scheduleWeather(long delay) {
@@ -305,6 +306,8 @@ final class SagaExtras {
             scheduleWeather(nextWeatherDelay());
             return;
         }
+        if (weatherBusy) return;   // Home came back while the last fetch is still out: that one reschedules
+        weatherBusy = true;
         worker.execute(() -> {
             List<Weather.Summary> results = new ArrayList<>();
             for (Place p : due) {
@@ -328,9 +331,9 @@ final class SagaExtras {
                     due.get(i).summary = s;
                     due.get(i).fetchedAt = System.currentTimeMillis();
                 }
-                Place shownPlace = current();
-                if (shownPlace == null || shownPlace.summary == null) showNextWithData(false);
-                else renderWeather(shownPlace, false);
+                weatherBusy = false;
+                // Also starts the turn: on the first fetch nothing had data, so no rotation was running yet.
+                showNextWithData(false);
                 scheduleWeather(failed ? RETRY_MS : nextWeatherDelay());
             });
         });
