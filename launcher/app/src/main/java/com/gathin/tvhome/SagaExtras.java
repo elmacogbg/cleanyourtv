@@ -321,8 +321,8 @@ final class SagaExtras {
         lp(l2).topMargin = dp(4);
         weatherPanel.addView(l2);
 
-        // What is still to come today. The period we are in is the headline above (its icon), so it is not
-        // repeated here, and the ones that are over are left out: the row only looks ahead.
+        // Always the next four periods, into tomorrow in the evening. The period we are in is the headline
+        // above (its icon), so it is not repeated here; tomorrow's carry their weekday: FRE 00–06.
         LinearLayout grid = new LinearLayout(ctx);
         grid.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams gridLp = new LinearLayout.LayoutParams(
@@ -331,11 +331,13 @@ final class SagaExtras {
         grid.setLayoutParams(gridLp);
         int hour = LocalTime.now().getHour();
         for (Weather.Period p : s.periods) {
-            if (hour >= p.slot) continue;   // over, or the one we are in now
+            boolean today = p.date.equals(s.date);
+            if (today && hour >= p.slot) continue;   // over, or the one we are in now
+            if (grid.getChildCount() == 4) break;
             LinearLayout col = new LinearLayout(ctx);
             col.setOrientation(LinearLayout.VERTICAL);
             col.setMinimumWidth(dp(CELL_DP / 4));
-            col.addView(label(Weather.slotLabel(p.slot), DIM));
+            col.addView(label(today ? Weather.slotLabel(p.slot) : weekday(p.date) + " " + Weather.slotLabel(p.slot), DIM));
             TextView t = text(Weather.temp(p.tempMin, p.tempMax), BODY_SP, WHITE, light);
             withIcon(t, Weather.icon(p.symbol, p.precip), 20, WHITE, 6);
             lp(t).topMargin = dp(6);
@@ -365,11 +367,23 @@ final class SagaExtras {
         sb.append("  ").append(value);
     }
 
+    /** "fre" for 2026-10-23, in the TV's language, without the full stop some locales add. */
+    private static String weekday(String isoDate) {
+        try {
+            return LocalDate.parse(isoDate).getDayOfWeek()
+                    .getDisplayName(java.time.format.TextStyle.SHORT, Locale.getDefault()).replace(".", "");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     /** The icon of the period we are in now. */
     private static String currentIcon(Weather.Summary s) {
         int hour = LocalTime.now().getHour();
         for (Weather.Period p : s.periods) {
-            if (hour >= p.slot && hour < p.slot + 6) return Weather.icon(p.symbol, p.precip);
+            if (p.date.equals(s.date) && hour >= p.slot && hour < p.slot + 6) {
+                return Weather.icon(p.symbol, p.precip);
+            }
         }
         return "";
     }

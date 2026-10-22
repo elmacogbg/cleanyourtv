@@ -98,6 +98,17 @@ public class WeatherTest {
     }
 
     @Test
+    public void tomorrowsPeriodsFollowTodays() throws Exception {
+        String om = OPEN_METEO.replace("\"hourly\":{\"time\":[\"2026-10-22T01:00\",\"2026-10-22T13:00\"]",
+                "\"hourly\":{\"time\":[\"2026-10-22T01:00\",\"2026-10-23T07:00\"]");
+        Weather.Summary s = Weather.summarize(Arrays.asList(Weather.parseOpenMeteo(om, NOW)));
+        Weather.Period last = s.periods.get(s.periods.size() - 1);
+        assertEquals("2026-10-23", last.date);
+        assertEquals(6, last.slot);
+        assertEquals("2026-10-22", s.periods.get(0).date);
+    }
+
+    @Test
     public void noSourcesMeansNoSummary() {
         assertNull(Weather.summarize(Collections.emptyList()));
     }

@@ -62,12 +62,16 @@ final class Weather {
 
     /** One merged period of the expanded day. */
     static final class Period {
+        /** The local date the period belongs to: today, or tomorrow for the evening's look ahead. */
+        final String date;
         final int slot;
         final Integer tempMin, tempMax, wind;
         final Double windDir, precip;
         final String symbol;
 
-        Period(int slot, Integer tempMin, Integer tempMax, Integer wind, Double windDir, Double precip, String symbol) {
+        Period(String date, int slot, Integer tempMin, Integer tempMax, Integer wind, Double windDir, Double precip,
+               String symbol) {
+            this.date = date;
             this.slot = slot;
             this.tempMin = tempMin;
             this.tempMax = tempMax;
@@ -374,13 +378,16 @@ final class Weather {
         out.rain = rainLine(rain);
         out.confidence = agreement(mids, winds);
 
-        for (int slot : SLOTS) {
+        // Today's periods and tomorrow's, so the screen can always show the next four (Njord's expanded day
+        // is one date; the TV looks ahead past midnight in the evening).
+        String tomorrow = java.time.LocalDate.parse(out.date).plusDays(1).toString();
+        for (String date : new String[]{out.date, tomorrow}) for (int slot : SLOTS) {
             List<Double> pmin = new ArrayList<>(), pmax = new ArrayList<>(), pw = new ArrayList<>(),
                     pd = new ArrayList<>(), pp = new ArrayList<>();
             String symbol = null;
             for (Source s : sources) {
                 for (PeriodEntry p : s.periods) {
-                    if (!p.date.equals(out.date) || p.slot != slot) continue;
+                    if (!p.date.equals(date) || p.slot != slot) continue;
                     if (p.tempMin != null) pmin.add((double) p.tempMin);
                     if (p.tempMax != null) pmax.add((double) p.tempMax);
                     if (p.windMax != null) pw.add((double) p.windMax);
@@ -391,7 +398,7 @@ final class Weather {
                 }
             }
             if (pmin.isEmpty() && pw.isEmpty()) continue;
-            out.periods.add(new Period(slot, round(median(pmin)), round(median(pmax)), round(median(pw)),
+            out.periods.add(new Period(date, slot, round(median(pmin)), round(median(pmax)), round(median(pw)),
                     circularMean(pd), median(pp), symbol));
         }
         return out;
