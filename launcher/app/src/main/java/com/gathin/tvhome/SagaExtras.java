@@ -271,9 +271,9 @@ final class SagaExtras {
         }
         weatherPanel.removeAllViews();
 
-        // HJUVIK  ·  99 %
+        // HJUVIK  ·  SÄKERHET 99 %: Njord's agreement badge, named; a bare percentage next to a place says nothing.
         String kicker = (placeName.isEmpty() ? "Väder" : placeName)
-                + (s.confidence != null ? "  ·  " + s.confidence + " %" : "");
+                + (s.confidence != null ? "  ·  Säkerhet " + s.confidence + " %" : "");
         weatherPanel.addView(label(kicker, DIM));
 
         // [icon] 11° / 12°: the icon is the period we are in now, in gold, so it says what it looks like outside.
