@@ -359,9 +359,9 @@ final class SagaExtras {
             case "partly_night": return R.drawable.wx_partly_night;
             case "cloud": return R.drawable.wx_cloud;
             case "fog": return R.drawable.wx_fog;
-            case "rain_light": return R.drawable.wx_rain_light;
+            case "rain_light": return R.drawable.wx_rain;   // one rain icon for all rain: the light and heavy ones
             case "rain": return R.drawable.wx_rain;
-            case "rain_heavy": return R.drawable.wx_rain;   // one rain icon: the heavy one read as noise at TV size
+            case "rain_heavy": return R.drawable.wx_rain;   // are streaks that read as noise at TV size
             case "sleet": return R.drawable.wx_sleet;
             case "snow": return R.drawable.wx_snow;
             case "snow_heavy": return R.drawable.wx_snow_heavy;
@@ -437,6 +437,8 @@ final class SagaExtras {
             }
         };
         window.setVerticalFadingEdgeEnabled(true);
+        // A ViewGroup that draws nothing of its own skips draw() and with it the fading edge; this keeps it.
+        window.setWillNotDraw(false);
         window.setFadingEdgeLength(dp(48));
         LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0);
         wlp.topMargin = dp(12);
