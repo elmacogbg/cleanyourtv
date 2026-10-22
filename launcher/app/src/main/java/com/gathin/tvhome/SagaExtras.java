@@ -82,6 +82,8 @@ final class SagaExtras {
     private long weatherAt, newsAt;
     private List<String> headlines = new ArrayList<>();
     private LinearLayout newsList;
+    private FrameLayout newsWindow;
+    private final int newsDefaultHeight;
     private boolean rolling;
 
     SagaExtras(Context ctx, LinearLayout weatherPanel, LinearLayout newsPanel) {
@@ -110,6 +112,14 @@ final class SagaExtras {
         newsUrl = url;
         weatherPanel.setVisibility(View.GONE);
         newsPanel.setVisibility(View.GONE);
+        // The column ends where the weather ends; the layout's height is the fallback without weather.
+        ViewGroup.LayoutParams np = newsPanel.getLayoutParams();
+        newsDefaultHeight = np.height > 0 ? np.height : dp(210);
+        np.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+        newsPanel.setLayoutParams(np);
+        weatherPanel.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
+            if (b - t != ob - ot) main.post(this::fitNews);
+        });
     }
 
     boolean enabled() {
@@ -368,10 +378,25 @@ final class SagaExtras {
         newsPanel.removeAllViews();
         newsPanel.addView(label("Nyheter  ·  SVT", DIM));
 
-        FrameLayout window = new FrameLayout(ctx);
-        LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        // A bottom fading edge: the headline cut by the window's lower edge fades out instead of being sliced,
+        // so the column can run down to the weather's last line. Plain views report no fading edge strength.
+        FrameLayout window = new FrameLayout(ctx) {
+            @Override
+            protected float getBottomFadingEdgeStrength() {
+                return 1f;
+            }
+
+            @Override
+            protected float getTopFadingEdgeStrength() {
+                return 0f;
+            }
+        };
+        window.setVerticalFadingEdgeEnabled(true);
+        window.setFadingEdgeLength(dp(48));
+        LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0);
         wlp.topMargin = dp(12);
         window.setLayoutParams(wlp);
+        newsWindow = window;
         window.setClipChildren(true);
         newsList = new LinearLayout(ctx);
         newsList.setOrientation(LinearLayout.VERTICAL);
@@ -382,6 +407,7 @@ final class SagaExtras {
         newsPanel.addView(window);
         newsPanel.setVisibility(View.VISIBLE);
         rolling = false;
+        newsList.post(this::fitNews);
         scheduleRoll();
     }
 
@@ -403,6 +429,27 @@ final class SagaExtras {
         p.bottomMargin = dp(14);
         t.setLayoutParams(p);
         return t;
+    }
+
+    /**
+     * Sizes the headline window to end level with the bottom of the weather (or at the layout's height without
+     * weather). The headline crossing that edge fades out through the window's fading edge.
+     */
+    private void fitNews() {
+        if (newsWindow == null || newsPanel.getChildCount() == 0) return;
+        View header = newsPanel.getChildAt(0);
+        if (header.getHeight() == 0) {         // not laid out yet: try again after this frame
+            newsPanel.post(this::fitNews);
+            return;
+        }
+        int column = weatherPanel.getVisibility() == View.VISIBLE && weatherPanel.getHeight() > 0
+                ? weatherPanel.getHeight() : newsDefaultHeight;
+        LinearLayout.LayoutParams wlp = (LinearLayout.LayoutParams) newsWindow.getLayoutParams();
+        int height = Math.max(0, column - header.getHeight() - wlp.topMargin);
+        if (wlp.height != height) {
+            wlp.height = height;
+            newsWindow.setLayoutParams(wlp);
+        }
     }
 
     private final Runnable rollTick = this::roll;
