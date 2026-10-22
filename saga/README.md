@@ -20,8 +20,8 @@ nätverksanrop.
 
 | Nyckel | Exempel | Betydelse |
 |---|---|---|
-| `weather_lat`, `weather_lon` | `57.70`, `11.72` | Platsen för vädret. Båda krävs |
-| `weather_name` | `"Hjuvik"` | Namnet ovanför vädret |
+| `weather_name` | `"Hjuvik"` | Orten. Slås upp i Open-Meteos ortssökning precis som Njord gör, så att TV:n och Njord hämtar för samma punkt. Svaret sparas, så uppslagningen görs en gång |
+| `weather_lat`, `weather_lon` | `57.70`, `11.72` | Valfritt: fasta koordinater i stället för uppslagning |
 | `news_rss` | `"https://www.svt.se/nyheter/rss.xml"` | RSS-flöde för nyhetsraden, måste vara https |
 
 Vädret hämtas var 30:e minut och nyheterna var 15:e, bara medan hemskärmen syns. Ett misslyckat anrop
