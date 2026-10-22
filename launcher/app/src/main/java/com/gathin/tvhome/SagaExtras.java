@@ -131,7 +131,9 @@ final class SagaExtras {
         transitPanel.setOrientation(LinearLayout.VERTICAL);
         transitPanel.setVisibility(View.GONE);
         if (column.getParent() instanceof FrameLayout) {
-            FrameLayout.LayoutParams tlp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            // CELL_DP wide at the page margin: its left edge lines up with the news cell under it, and the
+            // stop/departure columns get the room they need instead of running off the screen.
+            FrameLayout.LayoutParams tlp = new FrameLayout.LayoutParams(dp(CELL_DP),
                     ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
             tlp.topMargin = dp(HEADER_TOP_DP);
             tlp.setMarginEnd(dp(PAGE_MARGIN_DP));
