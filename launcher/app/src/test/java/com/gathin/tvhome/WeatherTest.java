@@ -123,7 +123,10 @@ public class WeatherTest {
         assertEquals("E", Weather.compass(90.0));
         assertEquals("SW", Weather.compass(225.0));
         assertEquals("11° / 12°", Weather.temp(11, 12));
-        assertEquals("8 m/s S", Weather.wind(8, 180.0));
+        assertEquals("\u2191 8 m/s S", Weather.wind(8, 180.0));   // from the south, blowing north
+        assertEquals("\u2190", Weather.arrow(90.0));                // easterly blows west
+        assertEquals("\u2197", Weather.arrow(225.0));               // south-westerly blows north-east
+        assertEquals("8 m/s", Weather.wind(8, null));
         assertEquals("—", Weather.wind(null, null));
     }
 

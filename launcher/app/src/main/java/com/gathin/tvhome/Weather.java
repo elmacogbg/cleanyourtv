@@ -489,10 +489,21 @@ final class Weather {
         return min == null || max == null ? NA : min + "° / " + max + "°";
     }
 
+    /** "↑ 8 m/s S": the arrow first, then Njord's text. */
     static String wind(Integer ms, Double dir) {
         if (ms == null) return NA;
-        String c = compass(dir);
-        return ms + " m/s" + (c.isEmpty() ? "" : " " + c);
+        String c = compass(dir), arrow = arrow(dir);
+        return (arrow.isEmpty() ? "" : arrow + " ") + ms + " m/s" + (c.isEmpty() ? "" : " " + c);
+    }
+
+    /**
+     * Where the wind blows TO, as weather maps draw it: a southerly (from 180°) points up. Eight directions, the
+     * same steps as the compass letters next to it, so arrow and letters never disagree.
+     */
+    static String arrow(Double deg) {
+        if (deg == null || deg.isNaN()) return "";
+        int i = (int) Math.round(((deg + 180) % 360) / 45) % 8;
+        return new String[]{"\u2191", "\u2197", "\u2192", "\u2198", "\u2193", "\u2199", "\u2190", "\u2196"}[i];
     }
 
     /** A period's rain: "2.3 mm", or "—" when it stays dry, as in Njord's grid. */
