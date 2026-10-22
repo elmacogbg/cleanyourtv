@@ -311,7 +311,8 @@ final class SagaExtras {
         row(line1, "Känns", Weather.temp(s.feelsMin, s.feelsMax));
         row(line1, "Vind", Weather.wind(s.wind, s.windDir));
         row(line1, "UV", s.uv == null ? Weather.NA : String.valueOf(s.uv));
-        row(line2, "Regn", s.rain == null ? Weather.NA : s.rain);
+        // Dry: no rain row at all, rather than a dash or "0 mm" to read past.
+        if (s.rain != null && !s.rain.equals("0 mm")) row(line2, "Regn", s.rain);
         row(line2, "Fukt.", s.humidity == null ? Weather.NA : s.humidity + "%");
         TextView l1 = text(line1, BODY_SP, WHITE, light);
         lp(l1).topMargin = dp(14);
@@ -343,7 +344,8 @@ final class SagaExtras {
             TextView w = text(Weather.wind(p.wind, p.windDir), BODY_SP, DIM, light);
             lp(w).topMargin = dp(2);
             col.addView(w);
-            col.addView(text(Weather.periodRain(p.precip), BODY_SP, DIM, light));
+            String rain = Weather.periodRain(p.precip);
+            if (!Weather.NA.equals(rain)) col.addView(text(rain, BODY_SP, DIM, light));   // dry: nothing
             grid.addView(col);
         }
         if (grid.getChildCount() > 0) weatherPanel.addView(grid);
