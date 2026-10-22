@@ -142,14 +142,14 @@ final class Transit {
 
     /**
      * /stop-areas/{gid}/departures in Sleipner's trip shape, so {@link #parseTrips} reads it. A departure whose
-     * direction is one of {@code homeStops} (the stops on the screen) is heading out to them, not in, and is
-     * dropped; nothing else is assumed about where a line goes.
+     * end stop is one of {@code awayStops} (the stops on the screen plus the theme's transit_away) is heading
+     * out, not in, and is dropped; nothing else is assumed about where a line goes.
      */
-    static String departuresAsTrips(String body, List<String> homeStops) throws Exception {
-        return departuresAsTrips(body, homeStops, null);
+    static String departuresAsTrips(String body, List<String> awayStops) throws Exception {
+        return departuresAsTrips(body, awayStops, null);
     }
 
-    static String departuresAsTrips(String body, List<String> homeStops, StringBuilder seen) throws Exception {
+    static String departuresAsTrips(String body, List<String> awayStops, StringBuilder seen) throws Exception {
         JSONArray results = new JSONObject(body).optJSONArray("results");
         JSONArray trips = new JSONArray();
         if (results != null) {
@@ -162,7 +162,7 @@ final class Transit {
                 JSONObject line = sj == null ? null : sj.optJSONObject("line");
                 String name = line == null ? "" : line.optString("shortName", line.optString("name", ""));
                 String direction = sj == null ? "" : sj.optString("direction", "");
-                boolean out = headsTo(direction, homeStops);
+                boolean out = headsTo(direction, awayStops);
                 // What the board said, so a missing bus can be explained: "34 13:33 Amhult" or "x6 ... (ut)".
                 if (seen != null) seen.append(i == 0 ? "" : " | ").append(name).append(' ')
                         .append(planned.length() >= 16 ? planned.substring(11, 16) : planned).append(' ')
@@ -182,10 +182,14 @@ final class Transit {
         return out.toString();
     }
 
-    /** "Hjuvik" or "Hjuvik via Torslanda" heads to Hjuvik: the end stop is the part before " via ". */
+    /**
+     * "Hjuvik", "Hjuvik, Påstigning fram" and "Hjuvik via Torslanda" all head to Hjuvik: the end stop is the
+     * sign up to its first comma or " via ". A comma-named end stop ("Göteborg, Landvetter centrum") matches as
+     * its first part only, which is why the list is the owner's own end stops and not a guess.
+     */
     static boolean headsTo(String direction, List<String> stops) {
-        String end = direction.split(" via ", 2)[0].trim();
-        for (String s : stops) if (end.equalsIgnoreCase(s.trim())) return true;
+        String end = direction.split(" via ", 2)[0].split(",", 2)[0].trim();
+        for (String s : stops) if (!s.trim().isEmpty() && end.equalsIgnoreCase(s.trim())) return true;
         return false;
     }
 

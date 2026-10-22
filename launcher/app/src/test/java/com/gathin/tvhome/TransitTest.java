@@ -87,11 +87,11 @@ public class TransitTest {
     // /stop-areas/{gid}/departures at Majvik: the 34 in from Hjuvik, the x6, and a 34 out to Hjuvik.
     private static final String BOARD = "{\"results\":["
             + "{\"plannedTime\":\"2026-10-22T12:04:00+02:00\",\"estimatedTime\":\"2026-10-22T12:05:00+02:00\",\"isCancelled\":false,"
-            + "\"serviceJourney\":{\"direction\":\"Amhult via Torslanda\",\"line\":{\"shortName\":\"34\"}}},"
+            + "\"serviceJourney\":{\"direction\":\"Eketrägatan, Påstigning fram\",\"line\":{\"shortName\":\"34\"}}},"
             + "{\"plannedTime\":\"2026-10-22T12:36:00+02:00\",\"isCancelled\":false,"
-            + "\"serviceJourney\":{\"direction\":\"Nils Ericson Terminalen\",\"line\":{\"shortName\":\"X6\"}}},"
+            + "\"serviceJourney\":{\"direction\":\"Göteborg, Landvetter centrum, Påstigning fram\",\"line\":{\"shortName\":\"X6\"}}},"
             + "{\"plannedTime\":\"2026-10-22T12:10:00+02:00\",\"isCancelled\":false,"
-            + "\"serviceJourney\":{\"direction\":\"Hjuvik\",\"line\":{\"shortName\":\"34\"}}}"
+            + "\"serviceJourney\":{\"direction\":\"Hjuvik, Påstigning fram\",\"line\":{\"shortName\":\"34\"}}}"
             + "]}";
 
     @Test
@@ -108,5 +108,8 @@ public class TransitTest {
     public void headsToReadsTheEndStopBeforeVia() {
         assertTrue(Transit.headsTo("Hjuvik via Torslanda", java.util.Arrays.asList("hjuvik")));
         assertTrue(!Transit.headsTo("Amhult via Hjuvik", java.util.Arrays.asList("Hjuvik")));
+        assertTrue(Transit.headsTo("Lilla Varholmen, Påstigning fram", java.util.Arrays.asList("Lilla Varholmen")));
+        assertTrue(!Transit.headsTo("Göteborg, Landvetter centrum, Påstigning fram",
+                java.util.Arrays.asList("Hjuvik", "Lilla Varholmen")));
     }
 }

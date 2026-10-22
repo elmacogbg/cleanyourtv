@@ -94,6 +94,7 @@ final class SagaExtras {
     private final String newsUrl;
     private final boolean weatherOn, newsOn, transitOn;
     private final List<String> transitStops = new ArrayList<>();
+    private final List<String> transitAway = new ArrayList<>();
     private final String transitTo, transitLabel, transitApi;
     /** The owner's own Västtrafik keys, when given: Home then asks Västtrafik directly instead of Sleipner. */
     private final String vtId, vtSecret;
@@ -173,6 +174,10 @@ final class SagaExtras {
                 if (!name.isEmpty()) transitStops.add(name);
             }
         }
+        // transit_away: end stops that mean "on the way out" ("Lilla Varholmen"); the stops above count too.
+        transitAway.addAll(transitStops);
+        org.json.JSONArray away = json != null ? json.optJSONArray("transit_away") : null;
+        if (away != null) for (int i = 0; i < away.length(); i++) transitAway.add(away.optString(i, "").trim());
         transitTo = json != null ? json.optString("transit_to", "").trim() : "";
         transitLabel = json != null ? json.optString("transit_label", "").trim() : "";
         String api = json != null ? json.optString("transit_api", "").trim() : "";
@@ -788,7 +793,7 @@ final class SagaExtras {
                             if (from != null) {
                                 String body = transitGet(Transit.vtDeparturesUrl(from, now), null);
                                 StringBuilder seen = new StringBuilder();
-                                next = Transit.parseTrips(Transit.departuresAsTrips(body, transitStops, seen), now,
+                                next = Transit.parseTrips(Transit.departuresAsTrips(body, transitAway, seen), now,
                                         TRANSIT_NEXT);
                                 Http.info("board " + stop + ": " + seen);
                                 any = true;

@@ -42,6 +42,7 @@
     "Hjuvik"
   ],
   "transit_to": "Centralstationen",
+  "transit_away": ["Lilla Varholmen"],
   "transit_label": "Mot Göteborg",
   "buttons_bottom": true
 }

@@ -27,6 +27,7 @@ nätverksanrop.
 | `weather_places` | `[{"name": "Hjuvik", "seconds": 20}, {"name": "Lissabon", "seconds": 10}]` | Flera orter som visas i tur och ordning, var och en sina sekunder. Ersätter `weather_name`; en post kan ha egna `lat`/`lon`. En ort i en annan tidszon visar sin lokala tid i rubriken |
 | `transit_stops` | `["Majvik", "Hjuvik"]` | Hållplatserna. Slås upp i Västtrafiks hållplatssökning; första träffen används och sparas |
 | `transit_to` | `"Centralstationen"` | Dit turerna ska gå. Med egna Västtrafik-nycklar används den inte: då visas hållplatsens avgångstavla, alla linjer, utom turer vars slutstation är en av `transit_stops` (de är på väg ut, inte in) |
+| `transit_away` | `["Lilla Varholmen"]` | Slutstationer som betyder "på väg ut". Turer dit visas inte; hållplatserna i `transit_stops` räknas alltid dit. Annars visas varje linje som går |
 | `transit_label` | `"Mot Göteborg"` | Rubriken över avgångarna |
 | `buttons_bottom` | `true` | Knapparna (källor, Wi-Fi, appbibliotek, inställningar) i en rad under dockan i stället för uppe till höger; appbibliotekets ruta efter sista raden försvinner. Kräver `library_button: true` för att biblioteket ska finnas kvar |
 | `news_rss` | `"https://www.svt.se/nyheter/rss.xml"` | RSS-flöde för nyhetsraden, måste vara https |
