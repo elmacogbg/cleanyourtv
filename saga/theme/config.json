@@ -37,6 +37,7 @@
   "library_button": true,
   "weather_places": [{"name": "Hjuvik", "seconds": 20}, {"name": "Lissabon", "lat": 38.72, "lon": -9.14, "seconds": 10}],
   "news_rss": "https://www.svt.se/nyheter/rss.xml",
+  "traffic_area": "Göteborg",
   "transit_stops": [
     "Majvik",
     "Hjuvik"

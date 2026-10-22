@@ -77,6 +77,11 @@ final class SagaExtras {
     private static final long ROLL_EVERY_MS = 6_000L;
     private static final long ROLL_MS = 700L;
     private static final int NEWS_MAX = 15;
+    /** Traffic changes by the minute; SR's list is small, so every five minutes is cheap. */
+    private static final long TRAFFIC_EVERY_MS = 5 * 60_000L;
+    private static final int TRAFFIC_MAX = 4;
+    /** Marks a traffic line in the column's list, so it is drawn with its TRAFIK label instead of a bullet. */
+    private static final String TRAFFIC_MARK = "\u0001";
     private static final long TRANSIT_EVERY_MS = 60_000L;   // two stops: two calls a minute, Sleipner allows 60
     private static final int TRANSIT_NEXT = 2;
     private static final String PREFS = "saga_extras";
@@ -91,7 +96,8 @@ final class SagaExtras {
     private final SharedPreferences prefs;
     private final Typeface regular, light;
 
-    private final String newsUrl;
+    private final String newsUrl, trafficArea;
+    private List<String> newsTitles = new ArrayList<>(), trafficLines = new ArrayList<>();
     private final boolean weatherOn, newsOn, transitOn;
     private final List<String> transitStops = new ArrayList<>();
     private final List<String> transitAway = new ArrayList<>();
@@ -164,7 +170,9 @@ final class SagaExtras {
         readPlaces(json);
         weatherOn = !places.isEmpty();
         String url = json != null ? json.optString("news_rss", "").trim() : "";
-        newsOn = url.startsWith("https://");
+        // traffic_area: "Göteborg", Sveriges Radio's traffic area; its serious messages roll with the news.
+        trafficArea = json != null ? json.optString("traffic_area", "").trim() : "";
+        newsOn = url.startsWith("https://") || !trafficArea.isEmpty();
         newsUrl = url;
         // transit_stops: ["Majvik", "Hjuvik"], transit_to: "Centralstationen", transit_label: "Mot Göteborg"
         org.json.JSONArray stops = json != null ? json.optJSONArray("transit_stops") : null;
@@ -222,6 +230,7 @@ final class SagaExtras {
         if (newsOn) {
             if (now - newsAt >= NEWS_EVERY_MS) fetchNews();
             else scheduleNews(NEWS_EVERY_MS - (now - newsAt));
+            if (!trafficArea.isEmpty()) fetchTraffic();
             scheduleRoll();
         }
         if (transitOn) fetchTransit();
@@ -233,6 +242,7 @@ final class SagaExtras {
         main.removeCallbacks(weatherTick);
         main.removeCallbacks(rotateTick);
         main.removeCallbacks(newsTick);
+        main.removeCallbacks(trafficTick);
         main.removeCallbacks(rollTick);
         main.removeCallbacks(transitTick);
         if (newsList != null) {
@@ -549,6 +559,7 @@ final class SagaExtras {
 
     private void fetchNews() {
         if (!running) return;
+        if (!newsUrl.startsWith("https://")) return;   // traffic only
         worker.execute(() -> {
             List<String> titles = null;
             try {
@@ -560,7 +571,8 @@ final class SagaExtras {
             main.post(() -> {
                 if (result != null && !result.isEmpty()) {
                     newsAt = System.currentTimeMillis();
-                    showNews(result);
+                    newsTitles = result;
+                    showNews(mixed());
                     scheduleNews(NEWS_EVERY_MS);
                 } else {
                     scheduleNews(RETRY_MS);
@@ -569,13 +581,50 @@ final class SagaExtras {
         });
     }
 
+    private final Runnable trafficTick = this::fetchTraffic;
+
+    /** Every five minutes: SR's serious traffic messages; none is an answer too, and clears the old ones. */
+    private void fetchTraffic() {
+        if (!running) return;
+        worker.execute(() -> {
+            List<String> lines = null;
+            try {
+                lines = Traffic.parse(Http.get(Traffic.url(trafficArea)), System.currentTimeMillis(), TRAFFIC_MAX);
+            } catch (Exception e) {
+                Http.log("traffic", e);
+            }
+            List<String> result = lines;
+            main.post(() -> {
+                if (result != null && !result.equals(trafficLines)) {
+                    trafficLines = result;
+                    List<String> all = mixed();
+                    if (!all.isEmpty()) showNews(all);
+                }
+                main.removeCallbacks(trafficTick);
+                if (running) main.postDelayed(trafficTick, result != null ? TRAFFIC_EVERY_MS : RETRY_MS);
+            });
+        });
+    }
+
+    /** The headlines with one traffic line after every third, so traffic comes round often without crowding. */
+    private List<String> mixed() {
+        List<String> out = new ArrayList<>();
+        int t = 0;
+        for (int i = 0; i < newsTitles.size(); i++) {
+            if (i % 3 == 0 && t < trafficLines.size()) out.add(TRAFFIC_MARK + trafficLines.get(t++));
+            out.add(newsTitles.get(i));
+        }
+        while (t < trafficLines.size()) out.add(TRAFFIC_MARK + trafficLines.get(t++));
+        return out;
+    }
+
     /** The column: a header, then the headlines in a clipped window that {@link #roll} moves up. */
     private void showNews(List<String> titles) {
         if (titles.equals(headlines) && newsList != null) return;   // same feed: keep the roll where it is
         headlines = new ArrayList<>(titles);
         newsPanel.animate().cancel();
         newsPanel.removeAllViews();
-        newsPanel.addView(label("Nyheter  ·  SVT", DIM));
+        newsPanel.addView(label(newsUrl.startsWith("https://") ? "Nyheter  ·  SVT" : "Trafik  ·  SR", DIM));
 
         // The headline crossing the window's lower edge fades out instead of being sliced, so the column can run
         // down to the weather's last line. Drawn here rather than with View's fading edge, which Android skipped:
@@ -621,13 +670,21 @@ final class SagaExtras {
         scheduleRoll();
     }
 
-    /** One headline: a gold bullet and up to two lines of BODY text, the second line hanging under the first word. */
+    /**
+     * One headline: a gold bullet and up to two lines of BODY text, the second line hanging under the first word.
+     * A traffic line has a gold TRAFIK label at LABEL size in place of the bullet.
+     */
     private TextView headline(String title) {
-        String bullet = "\u2022  ";
-        SpannableStringBuilder sb = new SpannableStringBuilder(bullet + title);
-        sb.setSpan(new ForegroundColorSpan(GOLD), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        boolean traffic = title.startsWith(TRAFFIC_MARK);
+        String bullet = traffic ? "TRAFIK   " : "\u2022  ";
+        SpannableStringBuilder sb = new SpannableStringBuilder(bullet + (traffic ? title.substring(1) : title));
+        int mark = traffic ? bullet.trim().length() : 1;
+        sb.setSpan(new ForegroundColorSpan(GOLD), 0, mark, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        if (traffic) sb.setSpan(new RelativeSizeSpan((float) LABEL_SP / BODY_SP), 0, mark, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         TextView t = text(sb, BODY_SP, WHITE, light);
-        int indent = Math.round(t.getPaint().measureText(bullet));
+        int indent = Math.round(traffic
+                ? t.getPaint().measureText("TRAFIK") * LABEL_SP / BODY_SP + t.getPaint().measureText("   ")
+                : t.getPaint().measureText(bullet));
         sb.setSpan(new LeadingMarginSpan.Standard(0, indent), 0, sb.length(), Spanned.SPAN_INCLUSIVE_INCLUSIVE);
         t.setText(sb);
         t.setSingleLine(false);
