@@ -774,18 +774,28 @@ final class SagaExtras {
             List<List<Transit.Departure>> rows = new ArrayList<>();
             boolean any = false;
             try {
-                String to = gid(transitTo);
+                String to = direct() ? null : gid(transitTo);
                 for (String stop : transitStops) {
                     List<Transit.Departure> next = null;
                     try {
-                        String from = to == null ? null : gid(stop);
-                        if (from != null && !from.equals(to)) {
-                            OffsetDateTime now = OffsetDateTime.now();
-                            String body = transitGet(Transit.vtJourneysUrl(from, to, now),
-                                    Transit.tripsUrl(transitApi, from, to));
-                            next = Transit.parseTrips(direct() ? Transit.journeysAsTrips(body) : body, now,
-                                    TRANSIT_NEXT);
-                            any = true;
+                        OffsetDateTime now = OffsetDateTime.now();
+                        if (direct()) {
+                            // Direct: the stop's own departure board, every line that comes, as at the stop.
+                            String from = gid(stop);
+                            if (from != null) {
+                                String body = transitGet(Transit.vtDeparturesUrl(from, now), null);
+                                next = Transit.parseTrips(Transit.departuresAsTrips(body, transitStops), now,
+                                        TRANSIT_NEXT);
+                                any = true;
+                            }
+                        } else {
+                            // Sleipner has trips only: the planner's best ways to the destination.
+                            String from = to == null ? null : gid(stop);
+                            if (from != null && !from.equals(to)) {
+                                next = Transit.parseTrips(Http.get(Transit.tripsUrl(transitApi, from, to)), now,
+                                        TRANSIT_NEXT);
+                                any = true;
+                            }
                         }
                     } catch (Exception e) {
                         Http.log("transit " + stop, e);

@@ -130,6 +130,55 @@ final class Transit {
                 + "&dateTime=" + when + "&dateTimeRelatesTo=departure&limit=30";
     }
 
+    /**
+     * The stop's departure board from 30 minutes ago on, so a late bus is still listed: every line that leaves,
+     * with no planner in between deciding which way to town is best.
+     */
+    static String vtDeparturesUrl(String stopGid, OffsetDateTime now) {
+        String when = now.minusMinutes(30).toInstant().truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString();
+        return VT_API + "/stop-areas/" + stopGid + "/departures?startDateTime=" + when
+                + "&timeSpanInMinutes=240&limit=60";
+    }
+
+    /**
+     * /stop-areas/{gid}/departures in Sleipner's trip shape, so {@link #parseTrips} reads it. A departure whose
+     * direction is one of {@code homeStops} (the stops on the screen) is heading out to them, not in, and is
+     * dropped; nothing else is assumed about where a line goes.
+     */
+    static String departuresAsTrips(String body, List<String> homeStops) throws Exception {
+        JSONArray results = new JSONObject(body).optJSONArray("results");
+        JSONArray trips = new JSONArray();
+        if (results != null) {
+            for (int i = 0; i < results.length(); i++) {
+                JSONObject r = results.optJSONObject(i);
+                if (r == null) continue;
+                String planned = r.optString("plannedTime", "");
+                if (planned.isEmpty()) continue;
+                JSONObject sj = r.optJSONObject("serviceJourney");
+                if (sj != null && headsTo(sj.optString("direction", ""), homeStops)) continue;
+                JSONObject line = sj == null ? null : sj.optJSONObject("line");
+                String name = line == null ? "" : line.optString("shortName", line.optString("name", ""));
+                JSONObject t = new JSONObject();
+                t.put("departed", false);
+                t.put("cancelled", r.optBoolean("isCancelled", false) || r.optBoolean("isPartCancelled", false));
+                t.put("lines", new JSONArray().put(name));
+                t.put("depPlanned", planned);
+                t.put("depEstimated", r.optString("estimatedTime", ""));
+                trips.put(t);
+            }
+        }
+        JSONObject out = new JSONObject();
+        out.put("trips", trips);
+        return out.toString();
+    }
+
+    /** "Hjuvik" or "Hjuvik via Torslanda" heads to Hjuvik: the end stop is the part before " via ". */
+    static boolean headsTo(String direction, List<String> stops) {
+        String end = direction.split(" via ", 2)[0].trim();
+        for (String s : stops) if (end.equalsIgnoreCase(s.trim())) return true;
+        return false;
+    }
+
     /** /locations/by-text: the first stop area's gid, or null. */
     static String parseVtStopGid(String body) throws Exception {
         JSONArray results = new JSONObject(body).optJSONArray("results");

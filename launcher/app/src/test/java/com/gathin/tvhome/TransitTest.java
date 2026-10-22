@@ -83,4 +83,30 @@ public class TransitTest {
     public void emptyOrMissingTrips() throws Exception {
         assertEquals(0, Transit.parseTrips("{}", NOW, 2).size());
     }
+
+    // /stop-areas/{gid}/departures at Majvik: the 34 in from Hjuvik, the x6, and a 34 out to Hjuvik.
+    private static final String BOARD = "{\"results\":["
+            + "{\"plannedTime\":\"2026-10-22T12:04:00+02:00\",\"estimatedTime\":\"2026-10-22T12:05:00+02:00\",\"isCancelled\":false,"
+            + "\"serviceJourney\":{\"direction\":\"Amhult via Torslanda\",\"line\":{\"shortName\":\"34\"}}},"
+            + "{\"plannedTime\":\"2026-10-22T12:36:00+02:00\",\"isCancelled\":false,"
+            + "\"serviceJourney\":{\"direction\":\"Nils Ericson Terminalen\",\"line\":{\"shortName\":\"X6\"}}},"
+            + "{\"plannedTime\":\"2026-10-22T12:10:00+02:00\",\"isCancelled\":false,"
+            + "\"serviceJourney\":{\"direction\":\"Hjuvik\",\"line\":{\"shortName\":\"34\"}}}"
+            + "]}";
+
+    @Test
+    public void boardShowsEveryLineInButNotOutToTheHomeStops() throws Exception {
+        List<Transit.Departure> d = Transit.parseTrips(
+                Transit.departuresAsTrips(BOARD, java.util.Arrays.asList("Majvik", "Hjuvik")), NOW, 2);
+        assertEquals(2, d.size());
+        assertEquals("34", d.get(0).line);
+        assertEquals("12:05", d.get(0).clock(STOCKHOLM));
+        assertEquals("X6", d.get(1).line);
+    }
+
+    @Test
+    public void headsToReadsTheEndStopBeforeVia() {
+        assertTrue(Transit.headsTo("Hjuvik via Torslanda", java.util.Arrays.asList("hjuvik")));
+        assertTrue(!Transit.headsTo("Amhult via Hjuvik", java.util.Arrays.asList("Hjuvik")));
+    }
 }
