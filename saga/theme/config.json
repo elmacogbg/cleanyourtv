@@ -35,8 +35,6 @@
   "icon_only_buttons": true,
   "app_library": true,
   "library_button": false,
-  "weather_lat": 57.70,
-  "weather_lon": 11.72,
   "weather_name": "Hjuvik",
   "news_rss": "https://www.svt.se/nyheter/rss.xml"
 }
